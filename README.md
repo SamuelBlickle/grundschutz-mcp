@@ -69,6 +69,51 @@ Each requirement carries its German `text` and `guidance`, its module, a
 its `related` / `required` cross-references. Requirement texts are the original
 German wording from the BSI source.
 
+## Usage examples
+
+Once the server is connected, an agent answers questions by calling these tools.
+Every answer is the exact BSI wording, traceable to the pinned source — no
+guessing from training data. (Examples below are illustrative snapshots from the
+pinned BSI version; run `get_catalog_metadata` for the live state.)
+
+**Explore the catalogue**
+
+> *"Which modules does Grundschutz++ cover?"* → `list_modules`
+> → e.g. `ARCH.2` — Netzdesign (6 requirements), `GC.1` — Grundlagen (2), … one
+> `ModuleSummary` per Baustein.
+
+**Fetch a specific requirement**
+
+> *"What does GC.1.1 require?"* → `get_requirement_by_id("GC.1.1")`
+> → *"Governance und Compliance MUSS Verfahren und Regelungen zur Errichtung und
+> Aufrechterhaltung eines ISMS nach BSI Grundschutz++ verankern."*
+> (`security_level: normal-SdT`, `effort_level: 0`), plus its German `guidance`.
+
+**Work through a module**
+
+> *"List the requirements in GC.2."* → `list_requirements_by_module("GC.2")`
+> → `GC.2.1` Festlegung des externen Kontextes, `GC.2.2` Festlegung des internen
+> Kontextes — each with its security level and effort score for prioritisation.
+
+**Search the content**
+
+> *"What does Grundschutz say about Verschlüsselung?"* → `search_requirements("Verschlüsselung")`
+> → matches such as `DLS.2.2` Transportverschlüsselung, `DLS.2.3`
+> Vollverschlüsselung, `SENS.2.3` Verschlüsselung und Signatur. Searches titles,
+> texts, and tags.
+
+**Follow cross-references**
+
+> *"What is related to GC.2.1?"* → `get_mapping("related")`
+> → `GC.2.1 → GC.2.2`. Use `get_mapping("required")` for prerequisite
+> requirements.
+
+**Check provenance**
+
+> *"How current is the data, and where is it from?"* → `get_catalog_metadata`
+> → the requirement count, BSI source repository, the exact pinned commit, and
+> the data license (CC BY-SA 4.0).
+
 ## Data source and license
 
 - **Source:** [`BSI-Bund/Stand-der-Technik-Bibliothek`](https://github.com/BSI-Bund/Stand-der-Technik-Bibliothek), pinned to a specific commit.
@@ -93,9 +138,10 @@ vulnerability, see [SECURITY.md](./SECURITY.md).
 
 ## Maintainer
 
-Maintained by Samuel Blickle, who works in information security and IT-Grundschutz
-([samuelblickle.de](https://samuelblickle.de)). Contributions are welcome — see
-[CONTRIBUTING.md](./CONTRIBUTING.md).
+Maintained by Samuel Blickle, who advises organizations on information security
+and compliance ([samuelblickle.de](https://samuelblickle.de)). This is an
+independent open-source project (see the disclaimer above). Contributions are
+welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
