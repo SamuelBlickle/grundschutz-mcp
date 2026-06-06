@@ -40,9 +40,9 @@ def allow() -> None:
 # Heuristic: raw OSCAL navigation. These keys belong to the BSI/OSCAL shape and
 # must appear only in mapper.py (and tests).
 OSCAL_KEYS = ("controls", "parts", "props", "groups", "statement", "prose", "links")
+_OSCAL_ALT = "|".join(OSCAL_KEYS)
 OSCAL_NAV = re.compile(
-    r"""\[\s*["'](?:%s)["']\s*\]|\.get\(\s*["'](?:%s)["']"""
-    % ("|".join(OSCAL_KEYS), "|".join(OSCAL_KEYS))
+    rf"""\[\s*["'](?:{_OSCAL_ALT})["']\s*\]|\.get\(\s*["'](?:{_OSCAL_ALT})["']"""
 )
 
 # Files that are allowed to know the OSCAL format.
