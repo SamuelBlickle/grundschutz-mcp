@@ -29,6 +29,22 @@ jobs:
       - name: Unit tests (offline)
         run: uv run pytest -m "not network"
 
+  secrets:
+    # Credential scanner (complements the local leak-gate, which does not travel
+    # with clones). Scans the full history; fails the build on any finding.
+    # Intentionally has no `if:` guard — it must run on every push and PR.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # explicit job scope, independent of the top-level default
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   drift-monitor:
     # Runs on schedule and main. Hits the pinned BSI source and fails loudly if
     # the OSCAL shape no longer maps. Surfaces upstream drift before users do.
