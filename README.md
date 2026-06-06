@@ -1,8 +1,9 @@
 # grundschutz-mcp
 
-[![License: Apache 2.0](https://img.shields.io/badge/Code-Apache%202.0-blue.svg)](./LICENSE)
+[![CI](https://github.com/SamuelBlickle/grundschutz-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelBlickle/grundschutz-mcp/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Code: Apache 2.0](https://img.shields.io/badge/Code-Apache%202.0-blue.svg)](./LICENSE)
 [![Data: CC BY-SA 4.0](https://img.shields.io/badge/Data-CC%20BY--SA%204.0-lightgrey.svg)](./NOTICE)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](#)
 [![MCP](https://img.shields.io/badge/Model%20Context%20Protocol-server-purple.svg)](https://modelcontextprotocol.io)
 
 A Model Context Protocol (MCP) server that makes the German BSI IT-Grundschutz++
@@ -56,13 +57,17 @@ Or configure it manually in your MCP client (STDIO transport):
 
 | Tool | Purpose |
 | --- | --- |
+| `list_modules` | List all modules (Bausteine) with requirement counts — the entry point for exploring the catalog. |
+| `list_requirements_by_module` | List the requirements in a given module. |
 | `get_requirement_by_id` | Fetch a single requirement or practice by its ID. |
-| `list_requirements_by_module` | List requirements for a given Baustein/practice. |
-| `search_requirements` | Full-text search across requirements. |
-| `get_mapping` | Mapping to ISO 27001:2022, where present in the data. |
-| `get_catalog_metadata` | Version, source commit, and license info. |
+| `search_requirements` | Full-text search across requirement titles, texts, and tags. |
+| `get_mapping` | Internal cross-references between requirements (`related` or `required`). |
+| `get_catalog_metadata` | Catalog version, source commit, and license info. |
 
-Returned requirement texts are the original German wording from the BSI source.
+Each requirement carries its German `text` and `guidance`, its module, a
+`security_level` (`normal-SdT` / `erhöht`), an `effort_level` (0–5), tags, and
+its `related` / `required` cross-references. Requirement texts are the original
+German wording from the BSI source.
 
 ## Data source and license
 
@@ -86,11 +91,10 @@ This is a security-adjacent tool, so supply-chain integrity matters. Releases
 are versioned (SemVer) and signed; dependencies are pinned. To report a
 vulnerability, see [SECURITY.md](./SECURITY.md).
 
-## Who's behind this
+## Maintainer
 
-Built and maintained by Samuel Blickle, working in Informationssicherheit
-(CISO, ISMS, BSI IT-Grundschutz, NIS-2). More at
-[samuelblickle.de](https://samuelblickle.de). Contributions welcome, see
+Maintained by Samuel Blickle, who works in information security and IT-Grundschutz
+([samuelblickle.de](https://samuelblickle.de)). Contributions are welcome — see
 [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License

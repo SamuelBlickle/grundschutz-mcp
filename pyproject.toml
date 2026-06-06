@@ -23,7 +23,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://samuelblickle.de"
-Repository = "https://github.com/<user>/grundschutz-mcp"
+Repository = "https://github.com/SamuelBlickle/grundschutz-mcp"
 
 [project.scripts]
 grundschutz-mcp = "grundschutz_mcp.__main__:main"
