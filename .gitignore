@@ -1,0 +1,41 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Planungs-/Arbeitsartefakte — NIE veröffentlichen (enthalten kommerzielle/interne Notizen)
+task_plan.md
+findings.md
+progress.md
+handoffs.md
+.phase05-backup/
+
+# Leak-Gate: Denylist + lokale Hooks — NIE committen (würde die Begriffe selbst leaken)
+.leakpatterns
+.githooks/
+
+# Secrets / Credentials — niemals committen
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*_rsa
+*.keystore
+credentials
+credentials.*
+secrets.*
+*.secret
+.netrc
+.pypirc
+*.gpg
+*.asc
+.phase1-backup/

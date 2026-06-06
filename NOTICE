@@ -1,0 +1,16 @@
+grundschutz-mcp
+Copyright 2026 Samuel Blickle
+
+This product includes data from the BSI Stand-der-Technik-Bibliothek
+(BSI-Bund/Stand-der-Technik-Bibliothek), published by the Bundesamt fuer
+Sicherheit in der Informationstechnik (BSI).
+
+That data is licensed under Creative Commons Attribution-ShareAlike 4.0
+International (CC BY-SA 4.0): https://creativecommons.org/licenses/by-sa/4.0/
+
+The data is loaded at runtime from a pinned commit and passed through
+unmodified by this software. This project is not affiliated with, endorsed by,
+or certified by the BSI.
+
+The source code of grundschutz-mcp is licensed under the Apache License 2.0
+(see LICENSE).

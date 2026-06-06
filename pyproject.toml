@@ -1,0 +1,59 @@
+[project]
+name = "grundschutz-mcp"
+version = "0.1.0"
+description = "MCP server that makes the BSI IT-Grundschutz++ compendium queryable for AI agents and ISMS tooling."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Samuel Blickle" }]
+keywords = ["mcp", "bsi", "it-grundschutz", "oscal", "compliance", "isms"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+]
+
+dependencies = [
+    "mcp>=1.2.0",        # official Model Context Protocol SDK (incl. FastMCP)
+    "pydantic>=2.6",     # internal model + validation
+    "httpx>=0.27",       # runtime loading of the pinned BSI data
+]
+
+[project.urls]
+Homepage = "https://samuelblickle.de"
+Repository = "https://github.com/<user>/grundschutz-mcp"
+
+[project.scripts]
+grundschutz-mcp = "grundschutz_mcp.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "pyright>=1.1.350",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/grundschutz_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

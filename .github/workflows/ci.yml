@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly drift monitor against the pinned BSI source
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Type check
+        run: uv run pyright
+      - name: Unit tests (offline)
+        run: uv run pytest -m "not network"
+
+  drift-monitor:
+    # Runs on schedule and main. Hits the pinned BSI source and fails loudly if
+    # the OSCAL shape no longer maps. Surfaces upstream drift before users do.
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Schema test against pinned BSI data
+        run: uv run pytest -m network
