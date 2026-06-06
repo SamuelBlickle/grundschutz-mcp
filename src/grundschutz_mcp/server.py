@@ -11,7 +11,7 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from .loader import load_catalog
-from .model import Catalog, CatalogMetadata, Requirement
+from .model import Catalog, CatalogMetadata, ModuleSummary, Requirement
 
 mcp = FastMCP("grundschutz")
 
@@ -35,6 +35,16 @@ async def get_requirement_by_id(id: str) -> Requirement | None:
 async def list_requirements_by_module(module: str) -> list[Requirement]:
     """List all requirements belonging to a given Baustein/practice."""
     return (await _get_catalog()).by_module(module)
+
+
+@mcp.tool()
+async def list_modules() -> list[ModuleSummary]:
+    """List all modules (Bausteine) in the catalog: id, title, and requirement count.
+
+    Use this to discover which modules exist before calling
+    list_requirements_by_module.
+    """
+    return (await _get_catalog()).modules()
 
 
 @mcp.tool()

@@ -39,6 +39,14 @@ class Requirement(BaseModel):
     )
 
 
+class ModuleSummary(BaseModel):
+    """A discovery-level summary of one module (Baustein) in the catalog."""
+
+    module: str = Field(..., description="Module (group) ID, e.g. 'GC.1'.")
+    module_title: str = Field(..., description="Module (group) title.")
+    requirement_count: int = Field(..., description="Number of requirements in this module.")
+
+
 class CatalogMetadata(BaseModel):
     """Provenance and licensing of the loaded catalog."""
 
@@ -75,3 +83,19 @@ class Catalog:
 
     def all(self) -> list[Requirement]:
         return list(self._all)
+
+    def modules(self) -> list[ModuleSummary]:
+        titles: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for r in self._all:
+            if r.module not in titles:
+                titles[r.module] = r.module_title
+            counts[r.module] = counts.get(r.module, 0) + 1
+        return [
+            ModuleSummary(
+                module=module,
+                module_title=titles[module],
+                requirement_count=counts[module],
+            )
+            for module in sorted(counts)
+        ]

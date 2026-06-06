@@ -16,6 +16,12 @@ from pathlib import Path
 import pytest
 
 from grundschutz_mcp.mapper import OscalMappingError, map_catalog, map_requirement
+from grundschutz_mcp.model import (
+    Catalog,
+    CatalogMetadata,
+    ModuleSummary,
+    Requirement,
+)
 
 # Provenance values for map_catalog tests. Arbitrary but fixed: the mapper must
 # pass them through into metadata unchanged.
@@ -895,6 +901,127 @@ def test_requirement_has_no_params_field() -> None:
     req = map_requirement(control, module="X", module_title="t", path="root")
     assert "params" not in type(req).model_fields
     assert not hasattr(req, "params")
+
+
+# ---------------------------------------------------------------------------
+# Catalog.modules() / ModuleSummary (HANDOFF-013, Phase 2 discovery tool)
+#
+# Spec (HANDOFF-013/-014): Catalog.modules() aggregates requirements by their
+# `module` (group id) into one ModuleSummary{module, module_title,
+# requirement_count} per module. module_title is the first-seen title for that
+# module id; the result is sorted by module id and is independent of input
+# order. An empty catalog yields []. Inv. 2: ModuleSummary is a tiny projection
+# with exactly three fields.
+#
+# Tested through the public surface: ModuleSummary built either via map_catalog
+# (the real path) or by constructing a Catalog directly from Requirements (for
+# first-seen-title and ordering edge cases that need precise control).
+# ---------------------------------------------------------------------------
+
+
+def _summary_req(rid: str, *, module: str, module_title: str) -> Requirement:
+    """A minimal valid Requirement for direct Catalog construction."""
+    return Requirement(
+        id=rid,
+        title="Titel",
+        text="Text.",
+        guidance="Hinweise.",
+        module=module,
+        module_title=module_title,
+        security_level="normal-SdT",
+        effort_level=0,
+        tags=[],
+        related=[],
+        required=[],
+    )
+
+
+def _direct_catalog(reqs: list[Requirement]) -> Catalog:
+    meta = CatalogMetadata(
+        version="2024.1",
+        source_repo=_REPO,
+        source_commit=_COMMIT,
+        requirement_count=len(reqs),
+    )
+    return Catalog(reqs, meta)
+
+
+def test_modules_aggregates_one_summary_per_module_with_counts() -> None:
+    # _catalog_body has three modules: ORP.1 (1 ctrl), ORP.1.SUB (1, nested),
+    # SYS.1 (1). Add a fixture exercising a module with >= 2 requirements.
+    cat = _direct_catalog(
+        [
+            _summary_req("A.1", module="A.1", module_title="Alpha"),
+            _summary_req("A.2", module="A.1", module_title="Alpha"),
+            _summary_req("B.1", module="B.1", module_title="Beta"),
+        ]
+    )
+    summaries = cat.modules()
+    assert [(s.module, s.module_title, s.requirement_count) for s in summaries] == [
+        ("A.1", "Alpha", 2),
+        ("B.1", "Beta", 1),
+    ]
+
+
+def test_modules_module_title_is_first_seen_on_conflict() -> None:
+    # Two requirements share a module id but disagree on the title; the first
+    # one encountered (in catalog order) wins.
+    cat = _direct_catalog(
+        [
+            _summary_req("M.1", module="M", module_title="Erster Titel"),
+            _summary_req("M.2", module="M", module_title="Zweiter Titel"),
+        ]
+    )
+    summaries = cat.modules()
+    assert len(summaries) == 1
+    assert summaries[0].module_title == "Erster Titel"
+    assert summaries[0].requirement_count == 2
+
+
+def test_modules_sorted_by_module_id_regardless_of_input_order() -> None:
+    # Input order is intentionally jumbled; output must always sort by module id.
+    cat = _direct_catalog(
+        [
+            _summary_req("b1", module="B.2", module_title="B2"),
+            _summary_req("c1", module="B.1", module_title="B1"),
+            _summary_req("a1", module="A.1", module_title="A1"),
+            _summary_req("b2", module="B.2", module_title="B2"),
+        ]
+    )
+    summaries = cat.modules()
+    assert [s.module for s in summaries] == ["A.1", "B.1", "B.2"]
+
+
+def test_modules_empty_catalog_yields_empty_list() -> None:
+    cat = _direct_catalog([])
+    assert cat.modules() == []
+
+
+def test_modules_counts_sum_to_total_requirements() -> None:
+    cat = map_catalog(_catalog_body(), commit=_COMMIT, repo=_REPO)
+    summaries = cat.modules()
+    assert sum(s.requirement_count for s in summaries) == len(cat.all())
+
+
+def test_module_summary_has_exactly_three_fields() -> None:
+    # Inv. 2: ModuleSummary is a small projection, not a mirror of the source.
+    assert set(ModuleSummary.model_fields) == {
+        "module",
+        "module_title",
+        "requirement_count",
+    }
+
+
+def test_modules_from_map_catalog_covers_nested_subgroups() -> None:
+    # The real path: modules built from a mapped catalog include nested
+    # sub-group modules (ORP.1.SUB) as distinct modules, sorted by id.
+    cat = map_catalog(_catalog_body(), commit=_COMMIT, repo=_REPO)
+    summaries = cat.modules()
+    assert [(s.module, s.module_title, s.requirement_count) for s in summaries] == [
+        ("ORP.1", "Organisation", 1),
+        ("ORP.1.SUB", "Untergruppe", 1),
+        ("SYS.1", "Server", 1),
+    ]
 
 
 # ---------------------------------------------------------------------------

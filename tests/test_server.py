@@ -106,6 +106,32 @@ async def test_list_requirements_by_module_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
+# list_modules
+# ---------------------------------------------------------------------------
+
+
+async def test_list_modules_returns_one_summary_per_module() -> None:
+    summaries = await server.list_modules()
+    # The seeded catalog has two modules: ORP.1 (A.1, A.2) and SYS.1 (B.1).
+    assert [(s.module, s.module_title, s.requirement_count) for s in summaries] == [
+        ("ORP.1", "Organisation", 2),
+        ("SYS.1", "Server", 1),
+    ]
+
+
+async def test_list_modules_is_sorted_by_module_id() -> None:
+    summaries = await server.list_modules()
+    ids = [s.module for s in summaries]
+    assert ids == sorted(ids)
+
+
+async def test_list_modules_counts_sum_to_total_requirements(seed_catalog: Catalog) -> None:
+    summaries = await server.list_modules()
+    total = sum(s.requirement_count for s in summaries)
+    assert total == len(seed_catalog.all())
+
+
+# ---------------------------------------------------------------------------
 # search_requirements
 # ---------------------------------------------------------------------------
 
