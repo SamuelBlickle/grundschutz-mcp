@@ -1,6 +1,6 @@
 # 0005. Return BSI requirement texts in German only
 
-- Status: accepted
+- Status: accepted (refined by ADR-0009 on OSCAL parameter-placeholder resolution)
 - Date: 2026-06-06
 
 ## Context and problem statement

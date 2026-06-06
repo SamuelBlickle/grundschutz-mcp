@@ -678,6 +678,226 @@ def test_map_catalog_duplicate_ids_last_wins_but_count_keeps_both() -> None:
 
 
 # ---------------------------------------------------------------------------
+# OSCAL parameter resolution (HANDOFF-011, Phase 2)
+#
+# ~20% of real controls embed "{{ insert: param, <id> }}" tokens in their
+# statement (and potentially guidance) prose. Spec (findings.md §Phase 2 +
+# HANDOFF-010-return): the mapper resolves each token to the BSI-defined wording
+# — ", ".join(values) if the param carries a non-empty `values` list, else its
+# `label`. params come from control["params"] = [{"id", "label", values?}].
+# Invariant 2: params are transient; they never appear on Requirement.
+# Invariant 4: only the placeholder is substituted; surrounding text (umlauts
+# included) stays byte-for-byte verbatim. fail-loudly (Inv. 6): a dangling
+# param id raises with a .parts path; a param missing both values and label
+# raises with a .params path.
+#
+# These tests drive the public map_requirement only; the param-carrying form is
+# built by a dedicated helper so the existing placeholder-free fixtures (and
+# their tests) are untouched.
+# ---------------------------------------------------------------------------
+
+
+def _param_control(
+    *,
+    statement: str,
+    guidance: str = "Hinweise zur Umsetzung.",
+    params: list[dict[str, object]] | None = None,
+    include_params_key: bool = True,
+) -> dict[str, object]:
+    """A complete control whose prose may carry '{{ insert: param, id }}' tokens.
+
+    `params` is the raw OSCAL params list ([{id, label, values?}, ...]). When
+    `include_params_key` is False the 'params' key is omitted entirely, modelling
+    a control that defines no parameters at all.
+    """
+    control: dict[str, object] = {
+        "id": "X.A1",
+        "title": "Titel",
+        "parts": [
+            {"name": "statement", "prose": statement},
+            {"name": "guidance", "prose": guidance},
+        ],
+        "props": [
+            {"name": "sec_level", "value": "normal-SdT"},
+            {"name": "effort_level", "value": "0"},
+        ],
+        "links": [],
+    }
+    if include_params_key:
+        control["params"] = params if params is not None else []
+    return control
+
+
+# --- (1) resolved via label (param has only a label, no values) ------------
+
+
+def test_param_resolved_via_label_in_statement() -> None:
+    control = _param_control(
+        statement="Das ISMS MUSS nach {{ insert: param, p1 }} verankert werden.",
+        params=[{"id": "p1", "label": "BSI Grundschutz++"}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Das ISMS MUSS nach BSI Grundschutz++ verankert werden."
+    assert "{{" not in req.text
+
+
+# --- (2) resolved via values; values win over label; multi-value join ------
+
+
+def test_param_values_win_over_label() -> None:
+    control = _param_control(
+        statement="Wert: {{ insert: param, p1 }}.",
+        params=[{"id": "p1", "label": "FALLBACK", "values": ["echter Wert"]}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    # values present and non-empty -> the label is NOT used.
+    assert req.text == "Wert: echter Wert."
+    assert "FALLBACK" not in req.text
+
+
+def test_param_multiple_values_joined_with_comma_space() -> None:
+    control = _param_control(
+        statement="Werte: {{ insert: param, p1 }}.",
+        params=[{"id": "p1", "values": ["A", "B", "C"]}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Werte: A, B, C."
+
+
+def test_param_empty_values_list_falls_back_to_label() -> None:
+    # An empty values list is not "present" for resolution purposes -> label wins.
+    control = _param_control(
+        statement="Wert: {{ insert: param, p1 }}.",
+        params=[{"id": "p1", "label": "Etikett", "values": []}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Wert: Etikett."
+
+
+# --- (3) guidance prose is resolved too ------------------------------------
+
+
+def test_param_resolved_in_guidance_prose() -> None:
+    control = _param_control(
+        statement="Statement ohne Platzhalter.",
+        guidance="Siehe {{ insert: param, p1 }} für Details.",
+        params=[{"id": "p1", "label": "Referenzdokument"}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.guidance == "Siehe Referenzdokument für Details."
+    assert "{{" not in req.guidance
+
+
+# --- (4) several distinct placeholders; same placeholder twice -------------
+
+
+def test_param_several_distinct_placeholders_in_one_prose() -> None:
+    control = _param_control(
+        statement="Von {{ insert: param, p1 }} bis {{ insert: param, p2 }}.",
+        params=[
+            {"id": "p1", "label": "Anfang"},
+            {"id": "p2", "label": "Ende"},
+        ],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Von Anfang bis Ende."
+
+
+def test_param_same_placeholder_twice_both_replaced() -> None:
+    control = _param_control(
+        statement="{{ insert: param, p1 }} und nochmals {{ insert: param, p1 }}.",
+        params=[{"id": "p1", "label": "Wert"}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Wert und nochmals Wert."
+    assert "{{" not in req.text
+
+
+# --- (5) unknown / dangling param id -> OscalMappingError with .parts path --
+
+
+def test_param_unknown_id_in_statement_fails_loudly_with_parts_path() -> None:
+    control = _param_control(
+        statement="Verweis auf {{ insert: param, ghost }}.",
+        params=[{"id": "p1", "label": "vorhanden"}],
+    )
+    with pytest.raises(OscalMappingError) as exc:
+        map_requirement(control, module="X", module_title="t", path="root")
+    assert ".parts" in exc.value.path
+    assert "ghost" in str(exc.value)
+
+
+def test_param_unknown_id_with_no_params_defined_fails_loudly() -> None:
+    # A placeholder but the control defines no params at all -> dangling ref.
+    control = _param_control(
+        statement="Verweis auf {{ insert: param, p1 }}.",
+        include_params_key=False,
+    )
+    with pytest.raises(OscalMappingError) as exc:
+        map_requirement(control, module="X", module_title="t", path="root")
+    assert ".parts" in exc.value.path
+
+
+# --- (6) param with neither values nor label -> OscalMappingError .params ---
+
+
+def test_param_without_values_and_without_label_fails_loudly_with_params_path() -> None:
+    control = _param_control(
+        statement="Text mit {{ insert: param, p1 }}.",
+        params=[{"id": "p1"}],
+    )
+    with pytest.raises(OscalMappingError) as exc:
+        map_requirement(control, module="X", module_title="t", path="root")
+    assert ".params" in exc.value.path
+
+
+# --- (7) no params key + prose without placeholders -> unchanged, no error --
+
+
+def test_no_params_key_and_no_placeholder_passes_through_unchanged() -> None:
+    control = _param_control(
+        statement="Ein gewöhnlicher Satz ohne Maschinerie.",
+        guidance="Auch hier kein Platzhalter.",
+        include_params_key=False,
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Ein gewöhnlicher Satz ohne Maschinerie."
+    assert req.guidance == "Auch hier kein Platzhalter."
+
+
+# --- (8) Inv. 4: prose without placeholders byte-verbatim; surrounding text -
+
+
+def test_param_prose_without_placeholder_is_byte_for_byte_verbatim() -> None:
+    original = "Größe, Übersicht und Maßnahmen — alles bleibt unverändert (ÄÖÜß)."
+    control = _param_control(statement=original, params=[{"id": "p1", "label": "X"}])
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == original
+
+
+def test_param_text_around_resolved_placeholder_is_verbatim_with_umlauts() -> None:
+    control = _param_control(
+        statement="Für Prüfungen MÜSSEN {{ insert: param, p1 }} berücksichtigt werden.",
+        params=[{"id": "p1", "label": "Größenklassen"}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert req.text == "Für Prüfungen MÜSSEN Größenklassen berücksichtigt werden."
+
+
+# --- (9) Inv. 2: Requirement has no params field ---------------------------
+
+
+def test_requirement_has_no_params_field() -> None:
+    control = _param_control(
+        statement="Text mit {{ insert: param, p1 }}.",
+        params=[{"id": "p1", "label": "Wert"}],
+    )
+    req = map_requirement(control, module="X", module_title="t", path="root")
+    assert "params" not in type(req).model_fields
+    assert not hasattr(req, "params")
+
+
+# ---------------------------------------------------------------------------
 # Loader canary (regression guard for Invariant 1) — UNCHANGED.
 #
 # Lives in test_mapper.py because that file is in the hook's OSCAL_ALLOWED list;

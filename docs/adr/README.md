@@ -20,6 +20,7 @@ write the superseding ADR first.
 - [0006](0006-license-boundary-apache-ccbysa.md) - Separate code (Apache 2.0) and data (CC BY-SA 4.0)
 - [0007](0007-python-mcp-sdk-stack.md) - Build on Python and the official MCP SDK
 - [0008](0008-model-fields-from-verified-bsi-data.md) - Model the fields the real BSI data carries
+- [0009](0009-resolve-oscal-parameter-placeholders.md) - Resolve OSCAL parameter placeholders (refines 0005)
 
 ## Template
 Copy [template.md](template.md) for new records. Number sequentially.

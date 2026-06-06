@@ -8,12 +8,16 @@ through silently.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any, Literal, cast
 
 from .model import Catalog, CatalogMetadata, Requirement
 
 _MAX_GROUP_DEPTH = 32
+
+# OSCAL parameter placeholder inside part prose, e.g. "{{ insert: param, gc.1.1-prm1 }}".
+_PARAM_INSERT_RE = re.compile(r"\{\{\s*insert:\s*param,\s*([^}\s]+)\s*\}\}")
 
 
 class OscalMappingError(RuntimeError):
@@ -55,8 +59,11 @@ def map_requirement(
     rid = _require(control, "id", path=path)
     title = _require(control, "title", path=f"{path}.title")
 
-    text = _extract_part_prose(control, "statement", path=f"{path}.parts")
-    guidance = _extract_part_prose(control, "guidance", path=f"{path}.parts")
+    # Build the OSCAL parameter resolver once; params are transient (Invariant 2:
+    # they are not mirrored into the Requirement model).
+    params = _param_values(control, path=f"{path}.params")
+    text = _extract_part_prose(control, "statement", params=params, path=f"{path}.parts")
+    guidance = _extract_part_prose(control, "guidance", params=params, path=f"{path}.parts")
     security_level = _extract_security_level(control, path=f"{path}.props")
     effort_level = _extract_effort_level(control, path=f"{path}.props")
     tags = _extract_tags(control, path=f"{path}.props")
@@ -78,8 +85,64 @@ def map_requirement(
     )
 
 
-def _extract_part_prose(control: dict[str, Any], part_name: str, *, path: str) -> str:
-    """Return the non-empty prose of the named part. German, verbatim (Invariant 4)."""
+def _param_values(control: dict[str, Any], *, path: str) -> dict[str, str]:
+    """Build a {param-id: resolved-text} map from the control's OSCAL params.
+
+    The resolved text is the BSI-defined wording: the joined `values` if present,
+    otherwise the `label`. A param carrying neither is a drift signal and fails
+    loudly (Invariant 6). Missing 'params' is normal and yields an empty map.
+    These values stay transient here and are never added to the model (Invariant 2).
+    """
+    resolved: dict[str, str] = {}
+    for i, raw_param in enumerate(_require_list(control, "params", path=path)):
+        if not isinstance(raw_param, dict):
+            raise OscalMappingError("expected a param object", path=f"{path}[{i}]")
+        param = cast("dict[str, Any]", raw_param)
+        pid = param.get("id")
+        if not isinstance(pid, str) or not pid:
+            raise OscalMappingError("missing param 'id'", path=f"{path}[{i}]")
+        values = param.get("values")
+        if isinstance(values, list) and values:
+            items = cast("list[Any]", values)
+            if all(isinstance(v, str) for v in items):
+                resolved[pid] = ", ".join(cast("list[str]", items))
+                continue
+        label = param.get("label")
+        if isinstance(label, str) and label:
+            resolved[pid] = label
+            continue
+        raise OscalMappingError(
+            f"param {pid!r} has neither 'values' nor 'label'", path=f"{path}[{i}]"
+        )
+    return resolved
+
+
+def _resolve_param_inserts(prose: str, params: dict[str, str], *, path: str) -> str:
+    """Replace every '{{ insert: param, <id> }}' token with its BSI-defined value.
+
+    Invariant 4: only the placeholder is substituted by the value the BSI defined
+    for that parameter; no other part of the text is changed, translated, or
+    paraphrased. An unknown param id is a dangling reference (drift) and fails
+    loudly (Invariant 6).
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        pid = match.group(1)
+        if pid not in params:
+            raise OscalMappingError(f"unknown param reference {pid!r}", path=path)
+        return params[pid]
+
+    return _PARAM_INSERT_RE.sub(_sub, prose)
+
+
+def _extract_part_prose(
+    control: dict[str, Any], part_name: str, *, params: dict[str, str], path: str
+) -> str:
+    """Return the non-empty prose of the named part. German, verbatim (Invariant 4).
+
+    OSCAL parameter placeholders are resolved to their BSI-defined values; the
+    text is otherwise unchanged (see `_resolve_param_inserts`).
+    """
     for raw_part in _require_list(control, "parts", path=path):
         if not isinstance(raw_part, dict):
             continue
@@ -87,7 +150,7 @@ def _extract_part_prose(control: dict[str, Any], part_name: str, *, path: str) -
         if part.get("name") == part_name:
             prose = part.get("prose")
             if isinstance(prose, str) and prose.strip():
-                return prose
+                return _resolve_param_inserts(prose, params, path=path)
     raise OscalMappingError(f"no non-empty '{part_name}' prose found", path=path)
 
 
