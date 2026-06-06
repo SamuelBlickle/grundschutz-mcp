@@ -28,6 +28,22 @@ DENY_BASH = [
 # Files the agent must not silently overwrite/delete.
 PROTECTED = [r"(^|/)LICENSE$", r"(^|/)NOTICE$", r"(^|/)\.env$", r"(^|/)SECURITY\.md$"]
 
+# The PROTECTED guard above only covers the Write/Edit/MultiEdit tools. Bash can
+# mutate the same files (redirect, cp/mv/tee/sed -i, ...), so block the common
+# write vectors too. Reads (cat/grep/head/wc ...) are intentionally NOT matched.
+# This is defense-in-depth against ACCIDENTAL unreviewed changes, not a sandbox:
+# arbitrary interpreters (python -c, perl -e, ...) can still write and are not
+# regex-coverable. The threat model here is the agent generating an obvious
+# write command, not a determined bypass.
+_PROT_NAME = r"(?:LICENSE|NOTICE|SECURITY\.md|\.env)"
+_BOUND = r"(?:\s|;|&|\||$)"
+PROTECTED_WRITE_BASH = [
+    # redirect: > / >> / >| (clobber), optional fd/path prefix
+    rf">>?\|?\s*(?:\S*/)?{_PROT_NAME}{_BOUND}",
+    rf"\b(?:cp|mv|tee|dd|install|ln|truncate|rsync)\b[^|;&]*?{_PROT_NAME}{_BOUND}",
+    rf"\bsed\b[^|;&]*?-i[^|;&]*?{_PROT_NAME}\b",
+]
+
 
 def deny(reason: str) -> None:
     print(
@@ -54,6 +70,13 @@ def main() -> None:
         for pat in DENY_BASH:
             if re.search(pat, cmd):
                 deny(f"Blocked by policy: command matches /{pat}/. See CLAUDE.md.")
+        for pat in PROTECTED_WRITE_BASH:
+            if re.search(pat, cmd):
+                deny(
+                    "Protected file (LICENSE/NOTICE/SECURITY.md/.env) cannot be "
+                    "written via Bash. These change only via a deliberate, "
+                    "human-reviewed step."
+                )
 
     if tool in ("Write", "Edit", "MultiEdit"):
         path = inp.get("file_path", "").replace("\\", "/")
