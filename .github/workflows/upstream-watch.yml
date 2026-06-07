@@ -1,0 +1,148 @@
+name: Upstream watch
+
+# Detects when the BSI publishes a new version of the *exact* compendium file we
+# ship. This is distinct from the weekly drift-monitor in ci.yml: that one checks
+# whether the data at our PINNED commit still maps (the pin is immutable, so it
+# can never see upstream updates). This watcher compares the pinned blob against
+# the upstream default-branch HEAD and opens a tracking issue when they diverge.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # daily; one comparison is two metadata API calls
+  workflow_dispatch: {}   # allow manual runs
+
+# Least privilege: top level reads only.
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    # Only the canonical repo opens issues; forks have no business doing so.
+    if: github.repository == 'SamuelBlickle/grundschutz-mcp'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # checkout + read config.py
+      issues: write   # open/close the tracking issue
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false  # gh uses GH_TOKEN; don't leave creds in .git/config
+
+      - name: Resolve pinned source from config.py
+        id: cfg
+        # config.py is the single source of truth for what we ship. Read it with
+        # plain regex (no install needed) rather than duplicating the values here.
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import re, pathlib
+          t = pathlib.Path("src/grundschutz_mcp/config.py").read_text()
+          def g(name):
+              m = re.search(rf'^{name}\s*=\s*"([^"]+)"', t, re.M)
+              if not m:
+                  raise SystemExit(f"could not read {name} from config.py")
+              return m.group(1)
+          print(f"repo={g('BSI_REPO')}")
+          print(f"pin={g('BSI_PINNED_COMMIT')}")
+          print(f"path={g('BSI_COMPENDIUM_PATH')}")
+          PY
+
+      - name: Compare pinned vs upstream blob
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BSI_REPO: ${{ steps.cfg.outputs.repo }}
+          PIN: ${{ steps.cfg.outputs.pin }}
+          CPATH: ${{ steps.cfg.outputs.path }}
+        # git is content-addressed: identical file content => identical blob SHA.
+        # Comparing blob SHAs needs only tree metadata, never the (large) content.
+        run: |
+          set -euo pipefail
+          default_branch="$(gh api "repos/$BSI_REPO" --jq .default_branch)"
+          echo "Upstream default branch: $default_branch"
+
+          blob_at() {
+            local ref="$1" tree
+            tree="$(gh api "repos/$BSI_REPO/git/trees/$ref?recursive=1")"
+            if [ "$(jq -r .truncated <<<"$tree")" = "true" ]; then
+              echo "::error::tree truncated for $ref — cannot compare reliably" >&2
+              exit 3
+            fi
+            jq -r --arg p "$CPATH" '.tree[] | select(.path==$p) | .sha' <<<"$tree"
+          }
+
+          pinned_sha="$(blob_at "$PIN")"
+          head_sha="$(blob_at "$default_branch")"
+          echo "pinned blob: ${pinned_sha:-<missing>}"
+          echo "head blob:   ${head_sha:-<missing>}"
+
+          if [ -z "$pinned_sha" ] || [ -z "$head_sha" ]; then
+            echo "::error::compendium path not found in tree — upstream path drift?" >&2
+            exit 4
+          fi
+
+          if [ "$pinned_sha" = "$head_sha" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Open tracking issue (idempotent)
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BSI_REPO: ${{ steps.cfg.outputs.repo }}
+          PIN: ${{ steps.cfg.outputs.pin }}
+          CPATH: ${{ steps.cfg.outputs.path }}
+          DEFAULT_BRANCH: ${{ steps.diff.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          gh label create upstream-drift \
+            --color B60205 \
+            --description "BSI changed the pinned compendium upstream" \
+            >/dev/null 2>&1 || true
+
+          existing="$(gh issue list --label upstream-drift --state open \
+            --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            echo "Tracking issue #$existing already open — nothing to do."
+            exit 0
+          fi
+
+          history_url="https://github.com/$BSI_REPO/commits/$DEFAULT_BRANCH/$CPATH"
+          body="$(printf '%s\n' \
+            "Der Upstream-Watcher hat festgestellt, dass das BSI die ausgelieferte" \
+            "Compendium-Datei seit unserem gepinnten Stand geändert hat." \
+            "" \
+            "- **Gepinnter Commit:** \`$PIN\`" \
+            "- **Datei:** \`$CPATH\`" \
+            "- **Upstream-Repo:** https://github.com/$BSI_REPO" \
+            "- **Datei-Historie:** $history_url" \
+            "" \
+            "### Nächste Schritte (siehe RELEASING.md / VERSIONING.md)" \
+            "- [ ] \`/verify-oscal\` gegen den neuen Stand laufen lassen" \
+            "- [ ] \`BSI_PINNED_COMMIT\` in \`src/grundschutz_mcp/config.py\` bumpen" \
+            "- [ ] Offline- und Network-Tests grün" \
+            "- [ ] Ggf. \`mapper.py\` an Schema-Änderungen anpassen" \
+            "- [ ] Release gemäß VERSIONING.md (Daten-Update ≠ SemVer-Bruch)" \
+            "" \
+            "_Wird automatisch geschlossen, sobald der Pin wieder mit dem" \
+            "Upstream-Stand übereinstimmt._")"
+
+          gh issue create \
+            --label upstream-drift \
+            --title "BSI hat das Grundschutz++-Compendium aktualisiert" \
+            --body "$body"
+
+      - name: Close stale tracking issue (self-heal)
+        if: steps.diff.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          numbers="$(gh issue list --label upstream-drift --state open \
+            --json number --jq '.[].number' 2>/dev/null || true)"
+          for n in $numbers; do
+            gh issue close "$n" \
+              --comment "Pin stimmt wieder mit dem Upstream-Stand überein — automatisch geschlossen."
+          done
