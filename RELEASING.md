@@ -28,9 +28,14 @@ These steps need account access and are not automatable from the repo.
 
 ## Cutting a release
 
-1. Ensure `main` is green and `/ship-check` is GO.
+See [VERSIONING.md](VERSIONING.md) for the SemVer policy (the software contract
+is versioned independently of the BSI data version) and how to choose the level.
+The first public release is `1.0.0`.
+
+1. Ensure `main` is green and `/ship-check` is GO. For the `1.0.0` tag, also run
+   the API-freeze check from VERSIONING.md.
 2. Bump the version in `pyproject.toml` and `src/grundschutz_mcp/__init__.py`
-   (keep them in sync), commit.
+   (keep them in sync) to the level chosen per VERSIONING.md, commit.
 3. Tag and push:
    ```
    git tag vX.Y.Z

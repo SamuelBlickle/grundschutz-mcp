@@ -21,6 +21,7 @@ write the superseding ADR first.
 - [0007](0007-python-mcp-sdk-stack.md) - Build on Python and the official MCP SDK
 - [0008](0008-model-fields-from-verified-bsi-data.md) - Model the fields the real BSI data carries
 - [0009](0009-resolve-oscal-parameter-placeholders.md) - Resolve OSCAL parameter placeholders (refines 0005)
+- [0010](0010-versioning-semver-decoupled-from-bsi-data.md) - SemVer for the software, decoupled from the BSI data version
 
 ## Template
 Copy [template.md](template.md) for new records. Number sequentially.
