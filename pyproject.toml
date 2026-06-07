@@ -1,6 +1,6 @@
 [project]
 name = "grundschutz-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "MCP server that makes the BSI IT-Grundschutz++ compendium queryable for AI agents and ISMS tooling."
 readme = "README.md"
 requires-python = ">=3.11"
