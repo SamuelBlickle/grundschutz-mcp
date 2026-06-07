@@ -9,12 +9,12 @@ deterministic (no network).
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 
 from grundschutz_mcp import server
-from grundschutz_mcp.model import Catalog, CatalogMetadata, Requirement
+from grundschutz_mcp.model import Catalog, CatalogMetadata, CatalogStats, Requirement
 
 LOGGER_NAME = "grundschutz_mcp"
 
@@ -244,6 +244,150 @@ async def test_string_param_caps_in_tool_schema(
 
 
 # ---------------------------------------------------------------------------
+# filter_requirements (HANDOFF-021) — happy-path delegation, all-None guard,
+# and input caps asserted at the published tool schema (not via direct calls
+# with out-of-range values, which bypass Pydantic).
+# ---------------------------------------------------------------------------
+
+
+async def test_filter_requirements_delegates_happy_path() -> None:
+    # The seeded catalog: A.1, A.2 in ORP.1; B.1 in SYS.1. Filtering by module
+    # returns ORP.1's requirements, sorted by id.
+    reqs = await server.filter_requirements(module="ORP.1")
+    assert [r.id for r in reqs] == ["A.1", "A.2"]
+
+
+async def test_filter_requirements_tag_case_insensitive() -> None:
+    # A.1 carries the "Rollen" tag; a lower-case filter must still match it.
+    reqs = await server.filter_requirements(tag="rollen")
+    assert [r.id for r in reqs] == ["A.1"]
+
+
+async def test_filter_requirements_no_match_returns_empty_not_error() -> None:
+    assert await server.filter_requirements(module="NO.SUCH") == []
+
+
+async def test_filter_requirements_all_none_raises_before_catalog() -> None:
+    # Spec: with every parameter None the tool raises rather than dumping the
+    # whole catalogue. The guard runs in the tool, before Catalog.filter.
+    with pytest.raises(ValueError):
+        await server.filter_requirements()
+
+
+def _typed_branch(schema: dict[str, object], json_type: str) -> dict[str, object]:
+    """Return the non-null constraint branch of an optional (anyOf) param schema.
+
+    An optional MCP parameter (`X | None`) is published as an `anyOf` of the
+    real type and `{"type": "null"}`; the length/range/enum constraints live in
+    the non-null branch. Falls back to the schema itself for non-optional params.
+    """
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        branches = cast("list[object]", any_of)
+        for branch in branches:
+            if isinstance(branch, dict):
+                typed = cast("dict[str, object]", branch)
+                if typed.get("type") == json_type:
+                    return typed
+    return schema
+
+
+@pytest.mark.parametrize(
+    ("param", "max_length"),
+    [
+        ("module", 64),
+        ("tag", 64),
+    ],
+)
+async def test_filter_requirements_string_caps_in_schema(param: str, max_length: int) -> None:
+    branch = _typed_branch(await _tool_param_schema("filter_requirements", param), "string")
+    assert branch.get("maxLength") == max_length, f"filter_requirements.{param} cap"
+    assert branch.get("minLength") == 1, f"filter_requirements.{param} rejects empty"
+
+
+@pytest.mark.parametrize("param", ["min_effort", "max_effort"])
+async def test_filter_requirements_effort_bounds_in_schema(param: str) -> None:
+    branch = _typed_branch(await _tool_param_schema("filter_requirements", param), "integer")
+    assert branch.get("minimum") == 0, f"filter_requirements.{param} minimum 0"
+    assert branch.get("maximum") == 5, f"filter_requirements.{param} maximum 5"
+
+
+async def test_filter_requirements_security_level_is_enum_in_schema() -> None:
+    branch = _typed_branch(
+        await _tool_param_schema("filter_requirements", "security_level"), "string"
+    )
+    allowed = branch.get("enum") or branch.get("const")
+    assert isinstance(allowed, list), "security_level must be constrained, not a free string"
+    assert set(cast("list[object]", allowed)) == {"normal-SdT", "erhöht"}
+
+
+# ---------------------------------------------------------------------------
+# get_requirements_by_ids (HANDOFF-021) — order/dedup/missing over the seeded
+# catalog; list and item caps asserted at the published tool schema.
+# ---------------------------------------------------------------------------
+
+
+async def test_get_requirements_by_ids_preserves_order_and_dedups() -> None:
+    reqs = await server.get_requirements_by_ids(["B.1", "A.1", "B.1"])
+    assert [r.id for r in reqs] == ["B.1", "A.1"]
+
+
+async def test_get_requirements_by_ids_skips_missing() -> None:
+    reqs = await server.get_requirements_by_ids(["A.1", "GHOST", "B.1"])
+    assert [r.id for r in reqs] == ["A.1", "B.1"]
+
+
+async def test_get_requirements_by_ids_all_missing_returns_empty() -> None:
+    assert await server.get_requirements_by_ids(["X", "Y"]) == []
+
+
+async def test_get_requirements_by_ids_list_caps_in_schema() -> None:
+    tools = await server.mcp.list_tools()
+    tool = next(t for t in tools if t.name == "get_requirements_by_ids")
+    ids_schema = tool.inputSchema["properties"]["ids"]
+    assert ids_schema.get("type") == "array"
+    assert ids_schema.get("minItems") == 1, "ids must require at least one entry"
+    assert ids_schema.get("maxItems") == 200, "ids list must be capped at 200"
+
+
+async def test_get_requirements_by_ids_item_cap_in_schema() -> None:
+    tools = await server.mcp.list_tools()
+    tool = next(t for t in tools if t.name == "get_requirements_by_ids")
+    items = tool.inputSchema["properties"]["ids"]["items"]
+    assert items.get("type") == "string"
+    assert items.get("maxLength") == 128, "each id must be capped at 128 chars"
+    assert items.get("minLength") == 1, "each id must be non-empty"
+
+
+# ---------------------------------------------------------------------------
+# get_catalog_stats (HANDOFF-021) — returns CatalogStats consistent with the
+# seeded catalog; empty catalog yields zeros and empty dicts.
+# ---------------------------------------------------------------------------
+
+
+async def test_get_catalog_stats_consistent_with_seed(seed_catalog: Catalog) -> None:
+    stats = await server.get_catalog_stats()
+    assert isinstance(stats, CatalogStats)
+    assert stats.total == len(seed_catalog.all()) == 3
+    # All three seeded requirements are normal-SdT, effort 1.
+    assert stats.by_security_level == {"normal-SdT": 3}
+    assert sum(stats.by_security_level.values()) == stats.total
+    assert stats.by_effort_level == {1: 3}
+    assert sum(stats.by_effort_level.values()) == stats.total
+    # Only A.1 carries a tag ("Rollen").
+    assert stats.by_tag == {"Rollen": 1}
+
+
+async def test_get_catalog_stats_empty_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "_catalog", _catalog([]))
+    stats = await server.get_catalog_stats()
+    assert stats.total == 0
+    assert stats.by_security_level == {}
+    assert stats.by_effort_level == {}
+    assert stats.by_tag == {}
+
+
+# ---------------------------------------------------------------------------
 # G2 — Audit logging: one logger.info per tool call, carrying the key
 # parameter and the result size (hit/miss or count). No full requirement
 # texts in the log.
@@ -321,6 +465,38 @@ async def test_log_get_catalog_metadata(caplog: pytest.LogCaptureFixture) -> Non
     assert "3" in msg  # requirement_count
 
 
+async def test_log_filter_requirements(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.filter_requirements(module="ORP.1")
+    records = [r for r in caplog.records if r.name == LOGGER_NAME]
+    assert len(records) == 1
+    msg = records[0].getMessage()
+    assert "ORP.1" in msg  # key parameter
+    assert "2" in msg  # count: A.1, A.2
+
+
+async def test_log_get_requirements_by_ids_reports_counts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.get_requirements_by_ids(["A.1", "GHOST", "B.1"])
+    records = [r for r in caplog.records if r.name == LOGGER_NAME]
+    assert len(records) == 1
+    msg = records[0].getMessage()
+    assert "3" in msg  # requested count
+    assert "2" in msg  # found count
+    assert "1" in msg  # missing count
+
+
+async def test_log_get_catalog_stats(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.get_catalog_stats()
+    records = [r for r in caplog.records if r.name == LOGGER_NAME]
+    assert len(records) == 1
+    msg = records[0].getMessage()
+    assert "3" in msg  # total requirements
+
+
 async def test_log_never_contains_full_requirement_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -333,6 +509,9 @@ async def test_log_never_contains_full_requirement_text(
         await server.list_modules()
         await server.get_mapping("related")
         await server.get_catalog_metadata()
+        await server.filter_requirements(module="ORP.1")
+        await server.get_requirements_by_ids(["A.1", "A.2", "B.1"])
+        await server.get_catalog_stats()
     assert secret_text not in caplog.text
 
 

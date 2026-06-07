@@ -12,6 +12,7 @@ tags comma-separated.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -19,6 +20,7 @@ from grundschutz_mcp.mapper import OscalMappingError, map_catalog, map_requireme
 from grundschutz_mcp.model import (
     Catalog,
     CatalogMetadata,
+    CatalogStats,
     ModuleSummary,
     Requirement,
 )
@@ -1022,6 +1024,321 @@ def test_modules_from_map_catalog_covers_nested_subgroups() -> None:
         ("ORP.1.SUB", "Untergruppe", 1),
         ("SYS.1", "Server", 1),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Catalog.filter / by_ids / stats + CatalogStats (HANDOFF-021, Phase 2+)
+#
+# Spec (2026-06-07-additional-query-tools-design.md §Tools/§Edge cases) +
+# HANDOFF-019/-020. These exercise the three new pure Catalog methods through
+# the public surface, by constructing a Catalog directly from Requirements so
+# the classification fields (security_level, effort_level, tags) can be set
+# precisely. No raw OSCAL is involved.
+#
+#   - filter(*, module, security_level, min_effort, max_effort, tag): AND of
+#     every non-None predicate; module/security_level exact; min/max_effort
+#     inclusive bounds; tag case-insensitive exact; result sorted by id;
+#     all-None -> the full catalog (a pure, composable identity).
+#   - by_ids(ids): one Requirement per distinct found id, first-seen order;
+#     missing ids skipped; all-missing -> [].
+#   - stats() -> CatalogStats{total, by_security_level, by_effort_level,
+#     by_tag}; empty catalog -> total 0 and three empty dicts.
+# ---------------------------------------------------------------------------
+
+
+def _full_req(
+    rid: str,
+    *,
+    module: str = "M",
+    module_title: str = "Modul",
+    security_level: Literal["normal-SdT", "erhöht"] = "normal-SdT",
+    effort_level: int = 0,
+    tags: list[str] | None = None,
+) -> Requirement:
+    """A Requirement with full control over the filter/stats classification fields."""
+    return Requirement(
+        id=rid,
+        title="Titel",
+        text="Text.",
+        guidance="Hinweise.",
+        module=module,
+        module_title=module_title,
+        security_level=security_level,
+        effort_level=effort_level,
+        tags=tags or [],
+        related=[],
+        required=[],
+    )
+
+
+# --- Catalog.filter — each criterion in isolation --------------------------
+
+
+def test_filter_module_exact_match() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", module="ORP.1"),
+            _full_req("B.1", module="SYS.1"),
+        ]
+    )
+    assert [r.id for r in cat.filter(module="ORP.1")] == ["A.1"]
+
+
+def test_filter_module_no_partial_match() -> None:
+    # module is an exact match, not a prefix/substring match.
+    cat = _direct_catalog([_full_req("A.1", module="ORP.1")])
+    assert cat.filter(module="ORP") == []
+
+
+def test_filter_security_level_exact() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", security_level="normal-SdT"),
+            _full_req("B.1", security_level="erhöht"),
+        ]
+    )
+    assert [r.id for r in cat.filter(security_level="erhöht")] == ["B.1"]
+
+
+def test_filter_min_effort_is_inclusive_lower_bound() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", effort_level=1),
+            _full_req("A.2", effort_level=2),
+            _full_req("A.3", effort_level=3),
+        ]
+    )
+    assert [r.id for r in cat.filter(min_effort=2)] == ["A.2", "A.3"]
+
+
+def test_filter_max_effort_is_inclusive_upper_bound() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", effort_level=1),
+            _full_req("A.2", effort_level=2),
+            _full_req("A.3", effort_level=3),
+        ]
+    )
+    assert [r.id for r in cat.filter(max_effort=2)] == ["A.1", "A.2"]
+
+
+def test_filter_min_equals_max_is_exact_effort() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", effort_level=1),
+            _full_req("A.2", effort_level=2),
+            _full_req("A.3", effort_level=3),
+        ]
+    )
+    assert [r.id for r in cat.filter(min_effort=2, max_effort=2)] == ["A.2"]
+
+
+def test_filter_effort_band() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.0", effort_level=0),
+            _full_req("A.1", effort_level=1),
+            _full_req("A.2", effort_level=2),
+            _full_req("A.3", effort_level=3),
+            _full_req("A.4", effort_level=4),
+        ]
+    )
+    assert [r.id for r in cat.filter(min_effort=1, max_effort=3)] == ["A.1", "A.2", "A.3"]
+
+
+def test_filter_inverted_effort_range_yields_empty() -> None:
+    # Spec edge case: min_effort > max_effort matches nothing (not an error).
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", effort_level=1),
+            _full_req("A.2", effort_level=4),
+        ]
+    )
+    assert cat.filter(min_effort=4, max_effort=1) == []
+
+
+def test_filter_tag_case_insensitive_exact_match() -> None:
+    # "Rollen" filter matches a "rollen" tag (case-insensitive exact)...
+    cat = _direct_catalog([_full_req("A.1", tags=["rollen"])])
+    assert [r.id for r in cat.filter(tag="Rollen")] == ["A.1"]
+
+
+def test_filter_tag_is_exact_not_substring() -> None:
+    # ...but "roll" must NOT match the "rollen" tag (exact, not substring).
+    cat = _direct_catalog([_full_req("A.1", tags=["Rollen"])])
+    assert cat.filter(tag="roll") == []
+
+
+def test_filter_tag_matches_any_of_multiple_tags() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", tags=["Organisation", "Rollen"]),
+            _full_req("B.1", tags=["Server"]),
+        ]
+    )
+    assert [r.id for r in cat.filter(tag="rollen")] == ["A.1"]
+
+
+# --- Catalog.filter — combined AND -----------------------------------------
+
+
+def test_filter_combines_criteria_with_and() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", module="ORP.1", security_level="erhöht", effort_level=3),
+            _full_req("A.2", module="ORP.1", security_level="normal-SdT", effort_level=3),
+            _full_req("A.3", module="SYS.1", security_level="erhöht", effort_level=3),
+        ]
+    )
+    # Only A.1 satisfies module AND security_level AND effort together.
+    result = cat.filter(module="ORP.1", security_level="erhöht", min_effort=3)
+    assert [r.id for r in result] == ["A.1"]
+
+
+def test_filter_three_criteria_with_tag() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", module="ORP.1", effort_level=2, tags=["Rollen"]),
+            _full_req("A.2", module="ORP.1", effort_level=2, tags=["Server"]),
+        ]
+    )
+    result = cat.filter(module="ORP.1", max_effort=2, tag="rollen")
+    assert [r.id for r in result] == ["A.1"]
+
+
+# --- Catalog.filter — deterministic sort by id -----------------------------
+
+
+def test_filter_result_is_sorted_by_id_regardless_of_input_order() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("C.1", module="M"),
+            _full_req("A.1", module="M"),
+            _full_req("B.1", module="M"),
+        ]
+    )
+    assert [r.id for r in cat.filter(module="M")] == ["A.1", "B.1", "C.1"]
+
+
+# --- Catalog.filter — no match and all-None identity -----------------------
+
+
+def test_filter_no_match_returns_empty_list() -> None:
+    cat = _direct_catalog([_full_req("A.1", module="ORP.1")])
+    assert cat.filter(module="DOES.NOT.EXIST") == []
+
+
+def test_filter_all_none_returns_every_requirement_sorted() -> None:
+    # The Catalog method itself is a pure, composable identity when given no
+    # criteria: it returns the whole catalog (sorted by id). The "at least one
+    # criterion" guard lives in the tool layer (server.py), not here.
+    cat = _direct_catalog(
+        [
+            _full_req("B.1"),
+            _full_req("A.1"),
+            _full_req("C.1"),
+        ]
+    )
+    assert [r.id for r in cat.filter()] == ["A.1", "B.1", "C.1"]
+
+
+# --- Catalog.by_ids --------------------------------------------------------
+
+
+def test_by_ids_preserves_first_seen_input_order() -> None:
+    cat = _direct_catalog([_full_req("A.1"), _full_req("B.1"), _full_req("C.1")])
+    result = cat.by_ids(["C.1", "A.1", "B.1"])
+    assert [r.id for r in result] == ["C.1", "A.1", "B.1"]
+
+
+def test_by_ids_deduplicates_keeping_first_occurrence() -> None:
+    cat = _direct_catalog([_full_req("A.1"), _full_req("B.1")])
+    result = cat.by_ids(["A.1", "B.1", "A.1", "A.1"])
+    assert [r.id for r in result] == ["A.1", "B.1"]
+
+
+def test_by_ids_skips_missing_ids() -> None:
+    cat = _direct_catalog([_full_req("A.1"), _full_req("B.1")])
+    result = cat.by_ids(["A.1", "GHOST", "B.1"])
+    assert [r.id for r in result] == ["A.1", "B.1"]
+
+
+def test_by_ids_all_missing_returns_empty_list() -> None:
+    cat = _direct_catalog([_full_req("A.1")])
+    assert cat.by_ids(["X", "Y", "Z"]) == []
+
+
+# --- Catalog.stats ---------------------------------------------------------
+
+
+def test_stats_total_equals_len_all() -> None:
+    cat = _direct_catalog([_full_req("A.1"), _full_req("B.1"), _full_req("C.1")])
+    stats = cat.stats()
+    assert stats.total == len(cat.all()) == 3
+
+
+def test_stats_by_security_level_counts_sum_to_total() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", security_level="normal-SdT"),
+            _full_req("A.2", security_level="normal-SdT"),
+            _full_req("A.3", security_level="erhöht"),
+        ]
+    )
+    stats = cat.stats()
+    assert stats.by_security_level == {"normal-SdT": 2, "erhöht": 1}
+    assert sum(stats.by_security_level.values()) == stats.total
+
+
+def test_stats_by_effort_level_counts_sum_to_total_and_keys_are_int() -> None:
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", effort_level=0),
+            _full_req("A.2", effort_level=2),
+            _full_req("A.3", effort_level=2),
+            _full_req("A.4", effort_level=5),
+        ]
+    )
+    stats = cat.stats()
+    assert stats.by_effort_level == {0: 1, 2: 2, 5: 1}
+    assert sum(stats.by_effort_level.values()) == stats.total
+    # Keys must remain ints, not stringified (dict[int, int]).
+    assert all(isinstance(k, int) for k in stats.by_effort_level)
+
+
+def test_stats_by_tag_exact_per_tag_counts_multi_tag_counts_in_each() -> None:
+    # A requirement with multiple tags is counted once per tag, so the by_tag
+    # values can sum to more than total. Assert exact per-tag counts, not a sum.
+    cat = _direct_catalog(
+        [
+            _full_req("A.1", tags=["Rollen", "Organisation"]),
+            _full_req("A.2", tags=["Organisation"]),
+            _full_req("A.3", tags=[]),
+        ]
+    )
+    stats = cat.stats()
+    assert stats.by_tag == {"Rollen": 1, "Organisation": 2}
+    # The multi-tag requirement makes the tag total exceed the requirement total.
+    assert sum(stats.by_tag.values()) >= stats.total
+
+
+def test_stats_empty_catalog_is_zero_and_empty_dicts() -> None:
+    cat = _direct_catalog([])
+    stats = cat.stats()
+    assert stats.total == 0
+    assert stats.by_security_level == {}
+    assert stats.by_effort_level == {}
+    assert stats.by_tag == {}
+
+
+def test_catalog_stats_has_exactly_four_fields() -> None:
+    # Inv. 2: CatalogStats is an aggregate projection, not an OSCAL mirror.
+    assert set(CatalogStats.model_fields) == {
+        "total",
+        "by_security_level",
+        "by_effort_level",
+        "by_tag",
+    }
 
 
 # ---------------------------------------------------------------------------

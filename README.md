@@ -60,8 +60,11 @@ Or configure it manually in your MCP client (STDIO transport):
 | `list_modules` | List all modules (Bausteine) with requirement counts — the entry point for exploring the catalog. |
 | `list_requirements_by_module` | List the requirements in a given module. |
 | `get_requirement_by_id` | Fetch a single requirement or practice by its ID. |
+| `get_requirements_by_ids` | Fetch several requirements at once by ID — e.g. when following cross-references. |
 | `search_requirements` | Full-text search across requirement titles, texts, and tags. |
+| `filter_requirements` | Filter by module, security level, effort range, and/or tag (combined, AND). |
 | `get_mapping` | Internal cross-references between requirements (`related` or `required`). |
+| `get_catalog_stats` | Catalog overview: counts by security level, effort level, and tag. |
 | `get_catalog_metadata` | Catalog version, source commit, and license info. |
 
 Each requirement carries its German `text` and `guidance`, its module, a
@@ -106,7 +109,21 @@ pinned BSI version; run `get_catalog_metadata` for the live state.)
 
 > *"What is related to GC.2.1?"* → `get_mapping("related")`
 > → `GC.2.1 → GC.2.2`. Use `get_mapping("required")` for prerequisite
-> requirements.
+> requirements, then `get_requirements_by_ids([...])` to pull the referenced
+> requirements in a single call.
+
+**Scope by risk and effort**
+
+> *"Which 'erhöht' requirements in GC.1 are quick wins?"*
+> → `filter_requirements(module="GC.1", security_level="erhöht", max_effort=2)`
+> → the matching requirements, sorted by id. Criteria combine with AND; effort
+> uses `min_effort`/`max_effort` as an inclusive band.
+
+**Get an overview**
+
+> *"How is the catalogue distributed, and which tags exist?"* → `get_catalog_stats`
+> → totals and counts by `security_level`, by `effort_level` (0–5), and by tag
+> (the tag list doubles as tag discovery for `filter_requirements`).
 
 **Check provenance**
 

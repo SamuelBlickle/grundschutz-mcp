@@ -47,6 +47,24 @@ class ModuleSummary(BaseModel):
     requirement_count: int = Field(..., description="Number of requirements in this module.")
 
 
+class CatalogStats(BaseModel):
+    """Aggregate counts over the catalog (a projection, not an OSCAL mirror)."""
+
+    total: int = Field(..., description="Total number of requirements in the catalog.")
+    by_security_level: dict[str, int] = Field(
+        default_factory=dict,
+        description="Requirement count per security level.",
+    )
+    by_effort_level: dict[int, int] = Field(
+        default_factory=lambda: {},
+        description="Requirement count per ordinal effort level (0-5).",
+    )
+    by_tag: dict[str, int] = Field(
+        default_factory=dict,
+        description="Requirement count per tag; also serves tag discovery.",
+    )
+
+
 class CatalogMetadata(BaseModel):
     """Provenance and licensing of the loaded catalog."""
 
@@ -99,3 +117,52 @@ class Catalog:
             )
             for module in sorted(counts)
         ]
+
+    def filter(
+        self,
+        *,
+        module: str | None = None,
+        security_level: str | None = None,
+        min_effort: int | None = None,
+        max_effort: int | None = None,
+        tag: str | None = None,
+    ) -> list[Requirement]:
+        tag_folded = tag.casefold() if tag is not None else None
+        result = [
+            r
+            for r in self._all
+            if (module is None or r.module == module)
+            and (security_level is None or r.security_level == security_level)
+            and (min_effort is None or r.effort_level >= min_effort)
+            and (max_effort is None or r.effort_level <= max_effort)
+            and (tag_folded is None or tag_folded in {t.casefold() for t in r.tags})
+        ]
+        return sorted(result, key=lambda r: r.id)
+
+    def by_ids(self, ids: list[str]) -> list[Requirement]:
+        result: list[Requirement] = []
+        seen: set[str] = set()
+        for rid in ids:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            requirement = self._by_id.get(rid)
+            if requirement is not None:
+                result.append(requirement)
+        return result
+
+    def stats(self) -> CatalogStats:
+        by_security_level: dict[str, int] = {}
+        by_effort_level: dict[int, int] = {}
+        by_tag: dict[str, int] = {}
+        for r in self._all:
+            by_security_level[r.security_level] = by_security_level.get(r.security_level, 0) + 1
+            by_effort_level[r.effort_level] = by_effort_level.get(r.effort_level, 0) + 1
+            for t in r.tags:
+                by_tag[t] = by_tag.get(t, 0) + 1
+        return CatalogStats(
+            total=len(self._all),
+            by_security_level=by_security_level,
+            by_effort_level=by_effort_level,
+            by_tag=by_tag,
+        )
