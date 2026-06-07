@@ -1290,7 +1290,7 @@ def test_stats_by_security_level_counts_sum_to_total() -> None:
     assert sum(stats.by_security_level.values()) == stats.total
 
 
-def test_stats_by_effort_level_counts_sum_to_total_and_keys_are_int() -> None:
+def test_stats_by_effort_level_counts_sum_to_total_and_keys_are_str() -> None:
     cat = _direct_catalog(
         [
             _full_req("A.1", effort_level=0),
@@ -1300,10 +1300,11 @@ def test_stats_by_effort_level_counts_sum_to_total_and_keys_are_int() -> None:
         ]
     )
     stats = cat.stats()
-    assert stats.by_effort_level == {0: 1, 2: 2, 5: 1}
+    # API-freeze: by_effort_level is dict[str, int] with keys '0'-'5'.
+    assert stats.by_effort_level == {"0": 1, "2": 2, "5": 1}
     assert sum(stats.by_effort_level.values()) == stats.total
-    # Keys must remain ints, not stringified (dict[int, int]).
-    assert all(isinstance(k, int) for k in stats.by_effort_level)
+    # Keys must be stringified effort levels (dict[str, int]).
+    assert all(isinstance(k, str) for k in stats.by_effort_level)
 
 
 def test_stats_by_tag_exact_per_tag_counts_multi_tag_counts_in_each() -> None:

@@ -45,7 +45,10 @@ async def _get_catalog() -> Catalog:
 async def get_requirement_by_id(
     id: Annotated[str, Field(min_length=1, max_length=128)],
 ) -> Requirement | None:
-    """Fetch a single Grundschutz++ requirement or practice by its ID."""
+    """Fetch a single Grundschutz++ requirement or practice by its ID.
+
+    Returns null if no requirement has that id.
+    """
     result = (await _get_catalog()).get(id)
     logger.info("get_requirement_by_id id=%s %s", _safe_log(id), "hit" if result else "miss")
     return result
@@ -55,7 +58,7 @@ async def get_requirement_by_id(
 async def list_requirements_by_module(
     module: Annotated[str, Field(min_length=1, max_length=64)],
 ) -> list[Requirement]:
-    """List all requirements belonging to a given Baustein/practice."""
+    """List all requirements belonging to a given Baustein/practice, in catalog (source) order."""
     result = (await _get_catalog()).by_module(module)
     logger.info("list_requirements_by_module module=%s count=%d", _safe_log(module), len(result))
     return result
@@ -65,7 +68,7 @@ async def list_requirements_by_module(
 async def list_modules() -> list[ModuleSummary]:
     """List all modules (Bausteine) in the catalog: id, title, and requirement count.
 
-    Use this to discover which modules exist before calling
+    Sorted by module id. Use this to discover which modules exist before calling
     list_requirements_by_module.
     """
     result = (await _get_catalog()).modules()
@@ -77,21 +80,27 @@ async def list_modules() -> list[ModuleSummary]:
 async def search_requirements(
     query: Annotated[str, Field(min_length=1, max_length=200)],
 ) -> list[Requirement]:
-    """Full-text search across requirement titles and texts (German)."""
+    """Full-text search across requirement titles, texts, and tags (German).
+
+    Results are returned in catalog (source) order.
+    """
     result = (await _get_catalog()).search(query)
     logger.info("search_requirements query=%s count=%d", _safe_log(query), len(result))
     return result
 
 
 @mcp.tool()
-async def get_mapping(relation: Literal["related", "required"]) -> dict[str, list[str]]:
-    """Return internal requirement-to-requirement cross-references ('related' or 'required')."""
+async def get_cross_references(relation: Literal["related", "required"]) -> dict[str, list[str]]:
+    """Return internal requirement-to-requirement cross-references ('related' or 'required').
+
+    Only requirements that have at least one such cross-reference appear as keys.
+    """
     catalog = await _get_catalog()
     if relation == "related":
         mapping = {r.id: r.related for r in catalog.all() if r.related}
     else:
         mapping = {r.id: r.required for r in catalog.all() if r.required}
-    logger.info("get_mapping relation=%s count=%d", relation, len(mapping))
+    logger.info("get_cross_references relation=%s count=%d", relation, len(mapping))
     return mapping
 
 
@@ -106,8 +115,11 @@ async def filter_requirements(
     """Filter requirements by module, security level, effort range, and/or tag.
 
     Criteria combine with AND; the result is sorted by requirement id. At least
-    one criterion is required. `min_effort`/`max_effort` express '>= n', '<= n',
-    exactly n, or a band. `tag` matches case-insensitively.
+    one criterion is required. `security_level` is "normal-SdT" (standard) or
+    "erhöht" (elevated). `min_effort`/`max_effort` express '>= n', '<= n',
+    exactly n, or a band over the ordinal effort scale (0=mandatory/not assessed,
+    1=quick win, ... 5=complex; see the effort_level field for the full scale).
+    `tag` matches case-insensitively.
     """
     if (
         module is None

@@ -63,7 +63,7 @@ Or configure it manually in your MCP client (STDIO transport):
 | `get_requirements_by_ids` | Fetch several requirements at once by ID — e.g. when following cross-references. |
 | `search_requirements` | Full-text search across requirement titles, texts, and tags. |
 | `filter_requirements` | Filter by module, security level, effort range, and/or tag (combined, AND). |
-| `get_mapping` | Internal cross-references between requirements (`related` or `required`). |
+| `get_cross_references` | Internal cross-references between requirements (`related` or `required`). |
 | `get_catalog_stats` | Catalog overview: counts by security level, effort level, and tag. |
 | `get_catalog_metadata` | Catalog version, source commit, and license info. |
 
@@ -107,8 +107,8 @@ pinned BSI version; run `get_catalog_metadata` for the live state.)
 
 **Follow cross-references**
 
-> *"What is related to GC.2.1?"* → `get_mapping("related")`
-> → `GC.2.1 → GC.2.2`. Use `get_mapping("required")` for prerequisite
+> *"What is related to GC.2.1?"* → `get_cross_references("related")`
+> → `GC.2.1 → GC.2.2`. Use `get_cross_references("required")` for prerequisite
 > requirements, then `get_requirements_by_ids([...])` to pull the referenced
 > requirements in a single call.
 

@@ -166,28 +166,38 @@ async def test_search_no_match() -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_mapping
+# get_cross_references
 # ---------------------------------------------------------------------------
 
 
-async def test_get_mapping_related() -> None:
-    mapping = await server.get_mapping("related")
+async def test_get_cross_references_related() -> None:
+    mapping = await server.get_cross_references("related")
     assert mapping == {"A.1": ["A.2"]}
 
 
-async def test_get_mapping_required() -> None:
-    mapping = await server.get_mapping("required")
+async def test_get_cross_references_required() -> None:
+    mapping = await server.get_cross_references("required")
     assert mapping == {"A.1": ["A.3"]}
 
 
-async def test_get_mapping_relation_is_literal_in_tool_schema() -> None:
+async def test_get_cross_references_only_lists_requirements_with_that_relation() -> None:
+    # Only requirements that carry at least one cross-reference of the chosen
+    # relation appear as keys. A.2 and B.1 have neither related nor required, so
+    # they must not show up.
+    related = await server.get_cross_references("related")
+    required = await server.get_cross_references("required")
+    assert set(related) == {"A.1"}
+    assert set(required) == {"A.1"}
+
+
+async def test_get_cross_references_relation_is_literal_in_tool_schema() -> None:
     # The relation parameter is validated at the FastMCP boundary: the
     # registered tool advertises a Literal/enum, so an unsupported value
     # ("iso27001") is rejected before the body runs. Assert the contract via
     # the tool's published input schema rather than the raw function (which,
     # called directly, bypasses Pydantic validation).
     tools = await server.mcp.list_tools()
-    tool = next(t for t in tools if t.name == "get_mapping")
+    tool = next(t for t in tools if t.name == "get_cross_references")
     schema = tool.inputSchema
     relation = schema["properties"]["relation"]
     allowed = relation.get("enum") or relation.get("const")
@@ -212,7 +222,7 @@ async def test_get_catalog_metadata_fields_present() -> None:
 #
 # A direct Python call to a tool function bypasses Pydantic, so the caps are
 # asserted against the *published* tool input schema (minLength/maxLength),
-# exactly as get_mapping's Literal is checked via the schema — not by calling
+# exactly as get_cross_references's Literal is checked via the schema — not by calling
 # the function with an out-of-range value.
 # ---------------------------------------------------------------------------
 
@@ -372,7 +382,8 @@ async def test_get_catalog_stats_consistent_with_seed(seed_catalog: Catalog) -> 
     # All three seeded requirements are normal-SdT, effort 1.
     assert stats.by_security_level == {"normal-SdT": 3}
     assert sum(stats.by_security_level.values()) == stats.total
-    assert stats.by_effort_level == {1: 3}
+    assert stats.by_effort_level == {"1": 3}
+    assert all(isinstance(k, str) for k in stats.by_effort_level)
     assert sum(stats.by_effort_level.values()) == stats.total
     # Only A.1 carries a tag ("Rollen").
     assert stats.by_tag == {"Rollen": 1}
@@ -435,11 +446,11 @@ async def test_log_search_requirements(caplog: pytest.LogCaptureFixture) -> None
 
 
 @pytest.mark.parametrize("relation", ["related", "required"])
-async def test_log_get_mapping(
+async def test_log_get_cross_references(
     relation: Literal["related", "required"], caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        await server.get_mapping(relation)
+        await server.get_cross_references(relation)
     records = [r for r in caplog.records if r.name == LOGGER_NAME]
     assert len(records) == 1
     msg = records[0].getMessage()
@@ -507,7 +518,7 @@ async def test_log_never_contains_full_requirement_text(
         await server.search_requirements("festgelegt")
         await server.list_requirements_by_module("ORP.1")
         await server.list_modules()
-        await server.get_mapping("related")
+        await server.get_cross_references("related")
         await server.get_catalog_metadata()
         await server.filter_requirements(module="ORP.1")
         await server.get_requirements_by_ids(["A.1", "A.2", "B.1"])
@@ -724,9 +735,9 @@ async def test_log_get_requirements_by_ids_counts_unchanged(
     assert "missing=1" in msg
 
 
-async def test_log_get_mapping_literal_unchanged(caplog: pytest.LogCaptureFixture) -> None:
+async def test_log_get_cross_references_literal_unchanged(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        await server.get_mapping("related")
+        await server.get_cross_references("related")
     msg = await _one_log_message(caplog)
-    assert "relation=related" in msg
+    assert "get_cross_references relation=related" in msg
     assert "\\" not in msg, "a literal relation must not be escaped"

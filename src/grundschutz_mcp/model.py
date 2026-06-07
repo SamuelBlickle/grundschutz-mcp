@@ -26,8 +26,18 @@ class Requirement(BaseModel):
     guidance: str = Field(..., description="Original German implementation guidance.")
     module: str = Field(..., description="Module (group) ID this belongs to.")
     module_title: str = Field(..., description="Module (group) title this belongs to.")
-    security_level: Literal["normal-SdT", "erhöht"]
-    effort_level: int = Field(..., description="Ordinal implementation effort, 0-5.")
+    security_level: Literal["normal-SdT", "erhöht"] = Field(
+        ...,
+        description="BSI security level: normal-SdT (standard) | erhöht (elevated).",
+    )
+    effort_level: int = Field(
+        ...,
+        description=(
+            "Ordinal implementation effort 0-5: 0=not assessed (mandatory regardless); "
+            "1=quick win (same day); 2=within a week; 3=weeks to months; "
+            "4=long-term, expert knowledge; 5=complex, deep expertise."
+        ),
+    )
     tags: list[str] = Field(default_factory=list)
     related: list[str] = Field(
         default_factory=list,
@@ -55,9 +65,9 @@ class CatalogStats(BaseModel):
         default_factory=dict,
         description="Requirement count per security level.",
     )
-    by_effort_level: dict[int, int] = Field(
-        default_factory=lambda: {},
-        description="Requirement count per ordinal effort level (0-5).",
+    by_effort_level: dict[str, int] = Field(
+        default_factory=dict,
+        description="Requirement count per effort level (keys '0'-'5').",
     )
     by_tag: dict[str, int] = Field(
         default_factory=dict,
@@ -153,11 +163,12 @@ class Catalog:
 
     def stats(self) -> CatalogStats:
         by_security_level: dict[str, int] = {}
-        by_effort_level: dict[int, int] = {}
+        by_effort_level: dict[str, int] = {}
         by_tag: dict[str, int] = {}
         for r in self._all:
             by_security_level[r.security_level] = by_security_level.get(r.security_level, 0) + 1
-            by_effort_level[r.effort_level] = by_effort_level.get(r.effort_level, 0) + 1
+            effort_key = str(r.effort_level)
+            by_effort_level[effort_key] = by_effort_level.get(effort_key, 0) + 1
             for t in r.tags:
                 by_tag[t] = by_tag.get(t, 0) + 1
         return CatalogStats(

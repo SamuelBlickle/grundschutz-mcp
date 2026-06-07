@@ -39,3 +39,6 @@ secrets.*
 *.gpg
 *.asc
 .phase1-backup/
+
+# Local Claude Code MCP server config (absolute dev path; public install is uvx)
+.mcp.json
