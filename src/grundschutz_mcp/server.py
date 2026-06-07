@@ -17,6 +17,17 @@ from .model import Catalog, CatalogMetadata, CatalogStats, ModuleSummary, Requir
 
 logger = logging.getLogger("grundschutz_mcp")
 
+# Map every C0 control char (U+0000-U+001F) plus DEL (U+007F) to its escaped
+# repr. This neutralizes CR/LF (log-forging a second line) and other control
+# chars while leaving printable Unicode -- including German umlauts -- readable.
+_CONTROL_ESCAPE = {c: repr(chr(c))[1:-1] for c in (*range(0x20), 0x7F)}
+
+
+def _safe_log(value: str) -> str:
+    """Escape control chars so a logged user string cannot forge a log line."""
+    return value.translate(_CONTROL_ESCAPE)
+
+
 mcp = FastMCP("grundschutz")
 
 _catalog: Catalog | None = None
@@ -36,7 +47,7 @@ async def get_requirement_by_id(
 ) -> Requirement | None:
     """Fetch a single Grundschutz++ requirement or practice by its ID."""
     result = (await _get_catalog()).get(id)
-    logger.info("get_requirement_by_id id=%s %s", id, "hit" if result else "miss")
+    logger.info("get_requirement_by_id id=%s %s", _safe_log(id), "hit" if result else "miss")
     return result
 
 
@@ -46,7 +57,7 @@ async def list_requirements_by_module(
 ) -> list[Requirement]:
     """List all requirements belonging to a given Baustein/practice."""
     result = (await _get_catalog()).by_module(module)
-    logger.info("list_requirements_by_module module=%s count=%d", module, len(result))
+    logger.info("list_requirements_by_module module=%s count=%d", _safe_log(module), len(result))
     return result
 
 
@@ -68,7 +79,7 @@ async def search_requirements(
 ) -> list[Requirement]:
     """Full-text search across requirement titles and texts (German)."""
     result = (await _get_catalog()).search(query)
-    logger.info("search_requirements query=%s count=%d", query, len(result))
+    logger.info("search_requirements query=%s count=%d", _safe_log(query), len(result))
     return result
 
 
@@ -116,11 +127,11 @@ async def filter_requirements(
     logger.info(
         "filter_requirements module=%s security_level=%s min_effort=%s max_effort=%s "
         "tag=%s count=%d",
-        module,
+        _safe_log(module) if module is not None else None,
         security_level,
         min_effort,
         max_effort,
-        tag,
+        _safe_log(tag) if tag is not None else None,
         len(result),
     )
     return result

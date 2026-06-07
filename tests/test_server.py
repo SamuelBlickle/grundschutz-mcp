@@ -555,3 +555,178 @@ async def test_does_not_relog_catalog_loaded_when_already_seeded(
         await server.get_catalog_metadata()
     loaded = [r for r in caplog.records if "catalog loaded" in r.getMessage()]
     assert loaded == []
+
+
+# ---------------------------------------------------------------------------
+# HANDOFF-024 — CRLF / control-char log sanitization.
+#
+# Free-text user parameters that get logged (id, module, query, tag) must be
+# escaped before logging so a CR/LF cannot forge a second log line
+# (log-forging). The escaped form uses the Python repr escape: \r -> "\\r",
+# \n -> "\\n", \t -> "\\t", \x00 -> "\\x00", \x1b -> "\\x1b". Non-ASCII text
+# (German umlauts) must pass through unchanged. Behaviour-under-test is the
+# *logging*; whether a value matches a requirement is irrelevant here.
+#
+# Assertions read record.getMessage() (the rendered message), not caplog.text
+# (which appends the formatter's own trailing newline per record).
+# ---------------------------------------------------------------------------
+
+
+async def _one_log_message(caplog: pytest.LogCaptureFixture) -> str:
+    """Return the single grundschutz_mcp log message rendered for a tool call."""
+    records = [r for r in caplog.records if r.name == LOGGER_NAME]
+    assert len(records) == 1, f"expected exactly one log record, got {len(records)}"
+    return records[0].getMessage()
+
+
+# 1. Log-forging is prevented across every logged free-text parameter: a raw
+#    newline never reaches the message; the literal escape "\\n" / "\\r" does.
+
+
+async def test_log_search_query_newline_is_escaped_not_embedded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.search_requirements("admin\nFORGED count=999")
+    msg = await _one_log_message(caplog)
+    assert "\n" not in msg, "raw newline must not reach the log line (log-forging)"
+    assert "\\n" in msg, "newline must be escaped to the literal \\n"
+
+
+async def test_log_filter_tag_crlf_is_escaped_not_embedded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.filter_requirements(tag="x\r\ny")
+    msg = await _one_log_message(caplog)
+    assert "\r" not in msg and "\n" not in msg, "raw CR/LF must not reach the log line"
+    assert "\\r" in msg and "\\n" in msg, "CR and LF must be escaped to literals"
+
+
+async def test_log_get_requirement_by_id_newline_is_escaped_not_embedded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.get_requirement_by_id("A.1\nFORGED")
+    msg = await _one_log_message(caplog)
+    assert "\n" not in msg, "raw newline must not reach the log line"
+    assert "\\n" in msg, "newline must be escaped to the literal \\n"
+
+
+async def test_log_list_module_newline_is_escaped_not_embedded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.list_requirements_by_module("ORP.1\nFORGED")
+    msg = await _one_log_message(caplog)
+    assert "\n" not in msg, "raw newline must not reach the log line"
+    assert "\\n" in msg, "newline must be escaped to the literal \\n"
+
+
+# 2. German umlauts (and other printable non-ASCII) survive unescaped.
+
+
+async def test_log_umlauts_pass_through_unescaped(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.search_requirements("Verfügbarkeit")
+    msg = await _one_log_message(caplog)
+    assert "Verfügbarkeit" in msg, "umlaut text must stay human-readable"
+    assert "\\xe4" not in msg and "\\xfc" not in msg, "non-ASCII must not be \\x-escaped"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Größe",  # ö, ß
+        "Maßnahme",  # ß
+        "Überprüfung",  # Ü, ü
+    ],
+)
+async def test_log_various_umlauts_unchanged(value: str, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.search_requirements(value)
+    msg = await _one_log_message(caplog)
+    assert value in msg
+
+
+# 3. Other C0 control chars and the ANSI escape are rendered as literals.
+
+
+@pytest.mark.parametrize(
+    ("raw", "literal"),
+    [
+        ("\t", "\\t"),
+        ("\x1b", "\\x1b"),
+        ("\x00", "\\x00"),
+    ],
+)
+async def test_log_control_chars_escaped_to_literal(
+    raw: str, literal: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.search_requirements(f"a{raw}b")
+    msg = await _one_log_message(caplog)
+    assert raw not in msg, "raw control char must not reach the log line"
+    assert literal in msg, f"control char must be escaped to the literal {literal}"
+
+
+# 4. Benign values are logged verbatim (no over-escaping).
+
+
+@pytest.mark.parametrize(
+    ("tool", "value"),
+    [
+        ("get_requirement_by_id", "A.1"),
+        ("list_requirements_by_module", "ORP.1"),
+        ("search_requirements", "Servereinsatz"),
+    ],
+)
+async def test_log_benign_values_unchanged(
+    tool: str, value: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    fn = getattr(server, tool)
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await fn(value)
+    msg = await _one_log_message(caplog)
+    assert value in msg
+    assert "\\" not in msg, "a benign value must not introduce any escape sequence"
+
+
+# 5. filter_requirements with module=None / tag=None logs None, not a mangled
+#    value, and still works with another valid criterion.
+
+
+async def test_log_filter_none_module_and_tag_logged_as_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        result = await server.filter_requirements(security_level="erhöht")
+    # security_level="erhöht" is a single valid criterion; the seeded catalog is
+    # all normal-SdT, so the result is empty -- the point is the LOGGING.
+    assert result == []
+    msg = await _one_log_message(caplog)
+    assert "module=None" in msg, "None module must log as None, not be passed to _safe_log"
+    assert "tag=None" in msg, "None tag must log as None, not be passed to _safe_log"
+    assert "erhöht" in msg, "the supplied security level must appear unescaped"
+
+
+# 6. Regression: count-only / literal-only logs are untouched by sanitization.
+
+
+async def test_log_get_requirements_by_ids_counts_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.get_requirements_by_ids(["A.1", "GHOST", "B.1"])
+    msg = await _one_log_message(caplog)
+    assert "requested=3" in msg
+    assert "found=2" in msg
+    assert "missing=1" in msg
+
+
+async def test_log_get_mapping_literal_unchanged(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await server.get_mapping("related")
+    msg = await _one_log_message(caplog)
+    assert "relation=related" in msg
+    assert "\\" not in msg, "a literal relation must not be escaped"
