@@ -18,14 +18,14 @@ change and ships as a release — mapped onto SemVer by its content impact (belo
 
 | Level | Triggers |
 | --- | --- |
-| **MAJOR** | Breaking change to the software contract: a tool removed or renamed; incompatible parameters or return shape; a model field removed or retyped; `get_mapping` semantics changed; incompatible error behaviour. |
+| **MAJOR** | Breaking change to the software contract: a tool removed or renamed; incompatible parameters or return shape; a model field removed or retyped; `get_cross_references` semantics changed; incompatible error behaviour. |
 | **MINOR** | Additive software change (new tool, new optional model field) **or** a BSI data bump that **adds content** (new requirements, modules, tags, or fields). |
 | **PATCH** | Bug fix or internal change **or** a BSI data bump that is **only text corrections**. |
 
 ## Stability contract
 
 **Covered (stable across `1.x`):** tool names and signatures, model field names
-and types, `get_mapping` semantics, fail-loudly error behaviour, the STDIO
+and types, `get_cross_references` semantics, fail-loudly error behaviour, the STDIO
 transport.
 
 **Not covered (no stability promise):** the requirement **content** and exact

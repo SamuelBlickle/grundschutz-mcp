@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-06-07
 
+> **Erratum (2026-06-20):** the tool referred to as `get_mapping` below was later
+> renamed to `get_cross_references` (pre-1.0 API polish). This record is left
+> unchanged as a historical artifact; VERSIONING.md carries the current names.
+
 ## Context and problem statement
 The project has two independent version axes: the **software** (tool API, model
 shape, behaviour) and the **BSI data snapshot** (the pinned upstream commit,

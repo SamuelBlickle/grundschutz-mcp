@@ -20,7 +20,7 @@ upstream OSCAL drift instead of rubber-stamping the implementation.
 - get_requirement_by_id: hit, miss (None), case sensitivity of IDs.
 - list_requirements_by_module: empty module, populated module.
 - search_requirements: match in title, match in text, no match, casefold.
-- get_mapping: supported framework, unsupported framework -> {}.
+- get_cross_references: relation "related", relation "required"; only requirements with refs appear as keys.
 - get_catalog_metadata: commit/license/count present.
 
 ## Discipline

@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-06-06
 
+> **Erratum (2026-06-20):** the tool named `get_mapping` below was later renamed
+> to `get_cross_references` (pre-1.0 API polish). This record is left unchanged
+> as a historical artifact; see VERSIONING.md for the current tool surface.
+
 ## Context and problem statement
 The initial scaffold modelled each requirement with CIA protection goals
 (`confidentiality`/`integrity`/`availability` point scores) and ISO 27001

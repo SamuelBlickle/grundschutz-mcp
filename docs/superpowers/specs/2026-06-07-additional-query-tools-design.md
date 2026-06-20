@@ -3,6 +3,10 @@
 - Status: approved (brainstorming), pending implementation plan
 - Date: 2026-06-07
 
+> **Erratum (2026-06-20):** the tool listed as `get_mapping` was later renamed to
+> `get_cross_references` (pre-1.0 API polish). This design snapshot is left
+> unchanged as a historical artifact.
+
 ## Context
 
 The server currently exposes six tools: `get_requirement_by_id`,
