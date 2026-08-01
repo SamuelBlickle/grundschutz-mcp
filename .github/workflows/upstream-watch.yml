@@ -53,8 +53,11 @@ jobs:
           BSI_REPO: ${{ steps.cfg.outputs.repo }}
           PIN: ${{ steps.cfg.outputs.pin }}
           CPATH: ${{ steps.cfg.outputs.path }}
-        # git is content-addressed: identical file content => identical blob SHA.
-        # Comparing blob SHAs needs only tree metadata, never the (large) content.
+        # Two stages. git is content-addressed, so equal blob SHAs prove equal
+        # bytes from tree metadata alone -- no download. Unequal blob SHAs do NOT
+        # prove the requirements changed, because the file is a generated artifact
+        # republished on a schedule, so that case falls through to a normalized
+        # content digest before anything is reported.
         run: |
           set -euo pipefail
           default_branch="$(gh api "repos/$BSI_REPO" --jq .default_branch)"
@@ -83,6 +86,24 @@ jobs:
             jq -r --arg p "$CPATH" '.tree[] | select(.path==$p and .type=="blob") | .sha' <<<"$tree"
           }
 
+          # Only consulted when the blob SHAs already disagree, so the common
+          # case stays two metadata calls and never downloads the catalog.
+          # Normalizing away uuid, the publication timestamps and back-matter is
+          # what separates "the BSI republished the generated artifact" from
+          # "the BSI changed the requirements"; none of those fields reaches the
+          # internal model (see ADR-0008), so they cannot hide consumed drift.
+          content_digest_at() {
+            gh api "repos/$BSI_REPO/contents/$CPATH?ref=$1" \
+              -H "Accept: application/vnd.github.raw" \
+              | jq -S 'del(.catalog.uuid,
+                           .catalog.metadata.version,
+                           .catalog.metadata["last-modified"],
+                           .catalog.metadata["document-ids"],
+                           .catalog.metadata.links,
+                           .catalog["back-matter"])' \
+              | sha256sum | cut -d" " -f1
+          }
+
           pinned_sha="$(blob_at "$PIN")"
           head_sha="$(blob_at "$default_branch")"
           echo "pinned blob: ${pinned_sha:-<missing>}"
@@ -108,8 +129,36 @@ jobs:
           elif [ "$pinned_sha" = "$head_sha" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "drift=content" >> "$GITHUB_OUTPUT"
+            # Blob SHAs differ, which does not yet mean the requirements did.
+            # The BSI publishes this file from an automated rolling job and every
+            # republish mints a fresh catalog uuid and last-modified even when
+            # nothing else changed (verified: 7ea20849, d304c60c and 47de2824 are
+            # byte-different blobs with identical normalized content). Reporting
+            # those would train the maintainer to dismiss the label, and a real
+            # change such as a withdrawn requirement would drown in the noise.
+            #
+            # Assign before comparing: a command substitution *inside* an `if`
+            # test is exempt from set -e, so computing the digests in the
+            # condition would let two failed fetches compare equal and report
+            # "no drift" -- fail-open on the one signal this job exists to give.
+            pinned_digest="$(content_digest_at "$PIN")"
+            head_digest="$(content_digest_at "$default_branch")"
+            for d in "$pinned_digest" "$head_digest"; do
+              if ! printf '%s' "$d" | grep -qE '^[0-9a-f]{64}$'; then
+                echo "::error::could not compute a content digest — refusing to judge drift" >&2
+                exit 6
+              fi
+            done
+            echo "pinned content digest: $pinned_digest"
+            echo "head content digest:   $head_digest"
+
+            if [ "$pinned_digest" = "$head_digest" ]; then
+              echo "Blob differs but normalized content is identical — republish only, no drift."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "drift=content" >> "$GITHUB_OUTPUT"
+            fi
           fi
           echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
 
