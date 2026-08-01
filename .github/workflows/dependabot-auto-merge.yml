@@ -11,12 +11,15 @@ name: Dependabot auto-merge
 #   can never run with the write token.
 # - Gated on the `main` ruleset's required status checks: --auto waits for green
 #   CI before merging. Without that ruleset this workflow would merge instantly.
-# - Known gap: for `pull_request`, GitHub reads the workflow definition from the
-#   PR head. A github_actions bump of an action used by THIS job therefore runs
-#   the new, unreviewed SHA here with contents:write — and since such a PR does
-#   not touch uv.lock, the package gate below reports clean. Closing that means
-#   excluding the github_actions ecosystem from auto-merge; not done here
-#   because it makes every action bump a manual merge, which is a policy call.
+# - github_actions updates are NOT auto-merged at all, at any update-type. For
+#   `pull_request` GitHub reads the workflow definition from the PR head, so a
+#   bump of an action used by THIS job runs the new, unreviewed SHA right here
+#   with contents:write — and since such a PR does not touch uv.lock, the
+#   package gate below would report clean and the PR would merge itself. That
+#   is the tj-actions class of incident, and the actions are the one dependency
+#   kind this job actually executes, so they get a human. The cost is that
+#   every action bump is a manual merge; verifying the new SHA against the real
+#   tag is the work being paid for.
 
 on: pull_request
 
@@ -113,6 +116,7 @@ jobs:
         # would let a later edit there silently widen this gate.
         if: |
           steps.lock.outputs.clean == 'true' &&
+          steps.meta.outputs.package-ecosystem != 'github_actions' &&
           (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
            steps.meta.outputs.update-type == 'version-update:semver-minor')
         env:
@@ -121,11 +125,19 @@ jobs:
         run: gh pr merge --auto --squash "$PR_URL"
 
       - name: Explain why auto-merge was withheld
-        if: steps.lock.outputs.clean == 'false'
+        # Both withholding reasons, so a held PR is never silently held. Majors
+        # are excluded on purpose: they were never auto-merged and never
+        # commented, and that is unchanged.
+        if: |
+          steps.lock.outputs.clean == 'false' ||
+          (steps.meta.outputs.package-ecosystem == 'github_actions' &&
+           (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           NEW_PACKAGES: ${{ steps.lock.outputs.new_packages }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
         # Left open for review rather than failed: the PR is legitimate, it just
         # is not the kind that may land unattended. A red check would claim the
         # tree is broken, which it is not.
@@ -141,19 +153,34 @@ jobs:
             exit 0
           fi
 
-          body="$(printf '%s\n' \
-            "$marker" \
-            "Auto-merge zurückgehalten: dieses Update bringt neue Pakete in \`uv.lock\`." \
-            "" \
-            '```' \
-            "$NEW_PACKAGES" \
-            '```' \
-            "" \
-            "Der Update-Type betrifft nur die *direkte* Dependency — transitive" \
-            "Neuzugänge sind zusätzliche Angriffsfläche und ein zusätzlicher" \
-            "CVE-Kanal und brauchen einen Blick: Provenance prüfen (PyPI-" \
-            "Attestations) und Lizenz auf Vereinbarkeit mit unserer Apache-2.0-" \
-            "Distribution prüfen (Copyleft wäre das Problem; die CC-BY-SA-Grenze" \
-            "aus ADR-0006 betrifft nur die BSI-Daten, nicht Dependencies)," \
-            "dann von Hand mergen.")"
-          gh pr comment "$PR_URL" --body "$body"
+          if [ "$ECOSYSTEM" = "github_actions" ]; then
+            reason="$(printf '%s\n' \
+              "Auto-merge zurückgehalten: Action-Updates werden grundsätzlich von" \
+              "Hand gemergt." \
+              "" \
+              "Bei \`pull_request\` liest GitHub die Workflow-Definition vom PR-Head." \
+              "Ein Bump einer Action, die der Auto-Merge-Job selbst benutzt, würde" \
+              "die neue SHA also genau hier mit \`contents: write\` ausführen — und" \
+              "weil so ein PR \`uv.lock\` nicht anfasst, greift das Paket-Gate nicht." \
+              "" \
+              "Zu prüfen: die gepinnte SHA gegen den echten Tag im Upstream-Repo" \
+              "halten (nicht nur den Kommentar lesen) und die Änderungen der Action" \
+              "sichten, dann von Hand mergen.")"
+          else
+            reason="$(printf '%s\n' \
+              "Auto-merge zurückgehalten: dieses Update bringt neue Pakete in \`uv.lock\`." \
+              "" \
+              '```' \
+              "$NEW_PACKAGES" \
+              '```' \
+              "" \
+              "Der Update-Type betrifft nur die *direkte* Dependency — transitive" \
+              "Neuzugänge sind zusätzliche Angriffsfläche und ein zusätzlicher" \
+              "CVE-Kanal und brauchen einen Blick: Provenance prüfen (PyPI-" \
+              "Attestations) und Lizenz auf Vereinbarkeit mit unserer Apache-2.0-" \
+              "Distribution prüfen (Copyleft wäre das Problem; die CC-BY-SA-Grenze" \
+              "aus ADR-0006 betrifft nur die BSI-Daten, nicht Dependencies)," \
+              "dann von Hand mergen.")"
+          fi
+
+          gh pr comment "$PR_URL" --body "$(printf '%s\n%s\n' "$marker" "$reason")"
