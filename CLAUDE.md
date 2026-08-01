@@ -4,7 +4,7 @@ MCP server that makes the BSI IT-Grundschutz++ compendium queryable for AI
 agents and ISMS tooling. Public OSS, Apache 2.0 code, CC BY-SA 4.0 data.
 
 ## Stack
-- Python >= 3.11, official `mcp` SDK (FastMCP), Pydantic v2, httpx
+- Python >= 3.11, official `mcp` SDK (`MCPServer`, ex-FastMCP), Pydantic v2, httpx
 - uv for env/packaging; Ruff (lint+format), Pyright (strict), Pytest
 - Git + GitHub Actions. SemVer, signed releases, pinned dependencies
 

@@ -9,7 +9,7 @@ deterministic (no network).
 from __future__ import annotations
 
 import logging
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -190,15 +190,28 @@ async def test_get_cross_references_only_lists_requirements_with_that_relation()
     assert set(required) == {"A.1"}
 
 
+async def _tool_wire_schema(tool_name: str) -> dict[str, Any]:
+    """The tool's input schema exactly as a client receives it over the wire.
+
+    Serialized by alias on purpose: the SDK's Python attribute is
+    `input_schema`, but the MCP wire field is `inputSchema`. Asserting the
+    serialized form pins the client-visible contract, so an SDK rename of
+    either the attribute or the alias fails here instead of silently
+    changing what clients see.
+    """
+    tools = await server.mcp.list_tools()
+    tool = next(t for t in tools if t.name == tool_name)
+    wire = tool.model_dump(by_alias=True, mode="json")
+    return cast(dict[str, Any], wire["inputSchema"])
+
+
 async def test_get_cross_references_relation_is_literal_in_tool_schema() -> None:
-    # The relation parameter is validated at the FastMCP boundary: the
+    # The relation parameter is validated at the MCPServer boundary: the
     # registered tool advertises a Literal/enum, so an unsupported value
     # ("iso27001") is rejected before the body runs. Assert the contract via
     # the tool's published input schema rather than the raw function (which,
     # called directly, bypasses Pydantic validation).
-    tools = await server.mcp.list_tools()
-    tool = next(t for t in tools if t.name == "get_cross_references")
-    schema = tool.inputSchema
+    schema = await _tool_wire_schema("get_cross_references")
     relation = schema["properties"]["relation"]
     allowed = relation.get("enum") or relation.get("const")
     assert allowed is not None, "relation must be constrained, not a free string"
@@ -218,7 +231,7 @@ async def test_get_catalog_metadata_fields_present() -> None:
 
 
 # ---------------------------------------------------------------------------
-# G1 — Input caps live at the MCP/FastMCP (Pydantic) boundary.
+# G1 — Input caps live at the MCP/MCPServer (Pydantic) boundary.
 #
 # A direct Python call to a tool function bypasses Pydantic, so the caps are
 # asserted against the *published* tool input schema (minLength/maxLength),
@@ -228,10 +241,8 @@ async def test_get_catalog_metadata_fields_present() -> None:
 
 
 async def _tool_param_schema(tool_name: str, param: str) -> dict[str, object]:
-    tools = await server.mcp.list_tools()
-    tool = next(t for t in tools if t.name == tool_name)
-    properties = tool.inputSchema["properties"]
-    return properties[param]
+    properties = (await _tool_wire_schema(tool_name))["properties"]
+    return cast(dict[str, object], properties[param])
 
 
 @pytest.mark.parametrize(
@@ -352,18 +363,14 @@ async def test_get_requirements_by_ids_all_missing_returns_empty() -> None:
 
 
 async def test_get_requirements_by_ids_list_caps_in_schema() -> None:
-    tools = await server.mcp.list_tools()
-    tool = next(t for t in tools if t.name == "get_requirements_by_ids")
-    ids_schema = tool.inputSchema["properties"]["ids"]
+    ids_schema = (await _tool_wire_schema("get_requirements_by_ids"))["properties"]["ids"]
     assert ids_schema.get("type") == "array"
     assert ids_schema.get("minItems") == 1, "ids must require at least one entry"
     assert ids_schema.get("maxItems") == 200, "ids list must be capped at 200"
 
 
 async def test_get_requirements_by_ids_item_cap_in_schema() -> None:
-    tools = await server.mcp.list_tools()
-    tool = next(t for t in tools if t.name == "get_requirements_by_ids")
-    items = tool.inputSchema["properties"]["ids"]["items"]
+    items = (await _tool_wire_schema("get_requirements_by_ids"))["properties"]["ids"]["items"]
     assert items.get("type") == "string"
     assert items.get("maxLength") == 128, "each id must be capped at 128 chars"
     assert items.get("minLength") == 1, "each id must be non-empty"
