@@ -19,8 +19,14 @@ change and ships as a release — mapped onto SemVer by its content impact (belo
 | Level | Triggers |
 | --- | --- |
 | **MAJOR** | Breaking change to the software contract: a tool removed or renamed; incompatible parameters or return shape; a model field removed or retyped; `get_cross_references` semantics changed; incompatible error behaviour. |
-| **MINOR** | Additive software change (new tool, new optional model field) **or** a BSI data bump that **adds content** (new requirements, modules, tags, or fields). |
+| **MINOR** | Additive software change (new tool, new optional model field) **or** a BSI data bump that **adds, removes, or replaces content** (requirements, modules, tags, or fields). |
 | **PATCH** | Bug fix or internal change **or** a BSI data bump that is **only text corrections**. |
+
+A data bump that **removes** requirement ids or modules is still MINOR — the
+stability contract below gives requirement content no promise, so a withdrawn id
+does not break the software contract. But it is invisible to a consumer who
+persisted those ids, so such a release **MUST list every removed id and module in
+its release notes**.
 
 ## Stability contract
 

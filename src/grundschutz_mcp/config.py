@@ -8,13 +8,21 @@ strategy in the project briefing), never an implicit moving target.
 from __future__ import annotations
 
 # Pinned commit of BSI-Bund/Stand-der-Technik-Bibliothek.
-# HEAD of `main` as of 2026-05-29, verified via /verify-oscal on 2026-06-06.
+# HEAD of `main` as of 2026-07-30, verified via /verify-oscal on 2026-08-01.
 BSI_REPO = "BSI-Bund/Stand-der-Technik-Bibliothek"
-BSI_PINNED_COMMIT = "b4e1ee402a94113a00978ecae3f397bc5bbce1b4"
+BSI_PINNED_COMMIT = "47de2824a341812438ef3f044b3f65ce2cad6e32"
 
 # Path to the Grundschutz++ compendium (OSCAL/JSON) inside the repo.
-# Verified against the real repo layout on 2026-06-06 (note the literal "++").
-BSI_COMPENDIUM_PATH = "Anwenderkataloge/Grundschutz++/Grundschutz++-catalog.json"
+# Verified against the real repo tree on 2026-08-01 (note the literal "++").
+#
+# Upstream moved this in 7ea20849 ("Migrate public library to layer-based
+# structure", 2026-07-27): Anwenderkataloge/ became control_layer/ and the
+# resolved artifact gained the "-resolved_catalog" suffix, with the source
+# catalogs and the profile now under control_layer/Grundschutz++/sources/.
+# The path was read off the tree, not off documentation/OSCAL.md -- that file
+# is a general OSCAL FAQ, documents none of the BSI-specific field paths, and
+# still links to a third variant (Kompendien/...) that 404s.
+BSI_COMPENDIUM_PATH = "control_layer/Grundschutz++/Grundschutz++-resolved_catalog.json"
 
 # Raw content base. Pinning by commit (not branch) makes loads reproducible.
 RAW_BASE = "https://raw.githubusercontent.com"

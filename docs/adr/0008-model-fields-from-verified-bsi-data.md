@@ -7,6 +7,28 @@
 > to `get_cross_references` (pre-1.0 API polish). This record is left unchanged
 > as a historical artifact; see VERSIONING.md for the current tool surface.
 
+> **Update (2026-08-01):** two premises below are no longer true upstream, so
+> read them as findings from 2026-06-06 rather than as current facts.
+>
+> 1. The verified artifact moved. `Anwenderkataloge/Grundschutz++/Grundschutz++-catalog.json`
+>    (651 controls) no longer exists; upstream restructured in `7ea20849` and the
+>    file is now `control_layer/Grundschutz++/Grundschutz++-resolved_catalog.json`.
+>    Re-verified at commit `47de2824` (652 controls, 140 modules): every field
+>    path this ADR settled is unchanged.
+> 2. **CIA props now exist.** The claim "there are no CIA props" held at the old
+>    pin but not at `47de2824`, which carries per-requirement `confidentiality`,
+>    `integrity`, `availability` and `authenticity` props (values `0`/`1`/`2`)
+>    plus `threats` (elementary-threat ids such as `G 0.18`).
+>
+> The decision to keep them out of the model stands, but now rests on different
+> grounds than "the data does not have them": no tool consumes them (ADR-0004);
+> the upstream namespace CSV defines the four terms but never the `0`/`1`/`2`
+> scale, so mapping them would mean inventing semantics; and they are absent on
+> the 56 method-layer controls, so a required field would fail loudly on valid
+> data while an optional one would reproduce exactly the hollow-field failure
+> this ADR was written to remove. Adding them needs a named consumer, an
+> authoritative source for the scale, and a decided treatment of "absent" vs `0`.
+
 ## Context and problem statement
 The initial scaffold modelled each requirement with CIA protection goals
 (`confidentiality`/`integrity`/`availability` point scores) and ISO 27001
