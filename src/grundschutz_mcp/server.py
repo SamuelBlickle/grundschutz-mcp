@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from .loader import load_catalog
@@ -28,7 +28,7 @@ def _safe_log(value: str) -> str:
     return value.translate(_CONTROL_ESCAPE)
 
 
-mcp = FastMCP("grundschutz")
+mcp = MCPServer("grundschutz")
 
 _catalog: Catalog | None = None
 
