@@ -3,6 +3,14 @@
 - Status: accepted
 - Date: 2026-06-06
 
+> **Amendment (2026-08-02):** "unmodified" below is too strong. ADR-0009 later
+> sanctioned resolving OSCAL parameter placeholders in the requirement prose, so
+> the pass-through is not literal. The licence conclusion is unaffected, because
+> it never rested on "we do not modify" but on "we ship no transformed artifact"
+> — the substitution happens in memory, in the user's own process, and nothing
+> derived is packaged. Read the rationale below with that substitution excepted;
+> NOTICE states it for redistributors.
+
 ## Context and problem statement
 The server needs the BSI Grundschutz++ compendium. The BSI publishes it as
 machine-readable OSCAL under CC BY-SA 4.0 in a repository that is an explicit

@@ -135,7 +135,7 @@ pinned BSI version; run `get_catalog_metadata` for the live state.)
 
 - **Source:** [`BSI-Bund/Stand-der-Technik-Bibliothek`](https://github.com/BSI-Bund/Stand-der-Technik-Bibliothek), pinned to a specific commit.
 - **Format:** OSCAL (a NIST standard), serialized as JSON.
-- **Data license:** the BSI data is licensed **CC BY-SA 4.0**. This server loads it at runtime and passes it through unmodified, so the BSI's attribution and share-alike terms apply to the data. See [NOTICE](./NOTICE).
+- **Data license:** the BSI data is licensed **CC BY-SA 4.0**. This server loads it at runtime and passes the requirement wording through verbatim, apart from resolving OSCAL parameter placeholders to the text the BSI defines for that parameter — usually the parameter's `label`, which marks a value left to be fixed downstream rather than one the BSI settled. The BSI's attribution and share-alike terms apply to the data. See [NOTICE](./NOTICE).
 - **Code license:** the server code is **Apache 2.0**. See [LICENSE](./LICENSE).
 
 ## Design notes

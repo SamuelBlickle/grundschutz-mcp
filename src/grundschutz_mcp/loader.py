@@ -1,8 +1,10 @@
 """Runtime loader: fetch the pinned OSCAL data and map it into the model.
 
-Data is loaded from the pinned BSI commit and passed through unmodified, so the
-CC BY-SA 4.0 share-alike terms do not extend to this code. No transformed data
-artifact is shipped with the package.
+Data is loaded from the pinned BSI commit. The only transformation to the
+requirement prose is the OSCAL parameter substitution in mapper.py (ADR-0009);
+structured metadata is normalised for query. No transformed data artifact is
+shipped with the package, which is what keeps the CC BY-SA 4.0 share-alike terms
+off this code. See NOTICE.
 
 This module is OSCAL-ignorant by design (Invariant 1): it performs IO only and
 delegates all knowledge of the BSI/OSCAL shape to the mapper.
