@@ -62,3 +62,21 @@ jobs:
         run: uv sync --locked --extra dev
       - name: Schema test against pinned BSI data
         run: uv run pytest -m network
+
+  artifacts:
+    # The licence boundary (ADR-0011) rests on shipping nothing derived from BSI
+    # content. release.yml enforces that before signing, but a tag is far too
+    # late to learn about a breach, so the same script runs on every PR. Needs
+    # the network: it reads the pinned catalog to know what BSI prose looks like.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+      - name: Sync
+        run: uv sync --locked
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Assert the artifacts carry no BSI data
+        # Same invocation as release.yml, so PRs exercise the release path.
+        run: uv run --no-sync python scripts/check_artifacts.py

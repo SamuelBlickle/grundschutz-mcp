@@ -45,6 +45,32 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/grundschutz_mcp"]
 
+# Explicit allowlist, not the default "whole VCS tree". Invariant 5 and ADR-0011
+# rest on shipping nothing derived from BSI content, so what goes into an
+# artifact is a reviewed decision rather than a side effect of what happens to
+# sit in the working tree. Drops .claude/ (agent prompts and hooks), .github/
+# and uv.lock, none of which an sdist consumer needs.
+#
+# CLAUDE.md stays: docs/adr ships, and every record there refers to the
+# invariants as stated in CLAUDE.md. Shipping the reasoning without the
+# statement it reasons about would leave the sdist self-referentially broken.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/grundschutz_mcp",
+    "tests",
+    "docs",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "VERSIONING.md",
+    "RELEASING.md",
+    "pyproject.toml",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -53,7 +79,7 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]

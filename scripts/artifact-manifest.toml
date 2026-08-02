@@ -1,0 +1,69 @@
+# Exact member list of each published artifact.
+#
+# This is the primary control behind ADR-0011: a file that is not listed here
+# cannot ship, whatever it contains and however it is encoded. Adding one is a
+# reviewed diff rather than a side effect of what sits in the working tree.
+#
+# Version-bearing roots are normalised away: the sdist root directory is
+# stripped, and the wheel's "grundschutz_mcp-<version>.dist-info" becomes
+# "<dist-info>". Regenerate with:
+#   uv build && uv run python scripts/check_artifacts.py --update-manifest
+
+wheel = [
+    "<dist-info>/METADATA",
+    "<dist-info>/RECORD",
+    "<dist-info>/WHEEL",
+    "<dist-info>/entry_points.txt",
+    "<dist-info>/licenses/LICENSE",
+    "<dist-info>/licenses/NOTICE",
+    "grundschutz_mcp/__init__.py",
+    "grundschutz_mcp/__main__.py",
+    "grundschutz_mcp/config.py",
+    "grundschutz_mcp/loader.py",
+    "grundschutz_mcp/mapper.py",
+    "grundschutz_mcp/model.py",
+    "grundschutz_mcp/server.py",
+]
+
+sdist = [
+    ".gitignore",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "NOTICE",
+    "PKG-INFO",
+    "README.md",
+    "RELEASING.md",
+    "SECURITY.md",
+    "VERSIONING.md",
+    "docs/adr/0001-record-architecture-decisions.md",
+    "docs/adr/0002-runtime-load-pinned-bsi-data.md",
+    "docs/adr/0003-anti-corruption-layer-for-oscal.md",
+    "docs/adr/0004-internal-model-is-a-projection.md",
+    "docs/adr/0005-keep-bsi-texts-in-german.md",
+    "docs/adr/0006-license-boundary-apache-ccbysa.md",
+    "docs/adr/0007-python-mcp-sdk-stack.md",
+    "docs/adr/0008-model-fields-from-verified-bsi-data.md",
+    "docs/adr/0009-resolve-oscal-parameter-placeholders.md",
+    "docs/adr/0010-versioning-semver-decoupled-from-bsi-data.md",
+    "docs/adr/0011-pass-through-is-about-distribution.md",
+    "docs/adr/README.md",
+    "docs/adr/template.md",
+    "docs/superpowers/specs/2026-06-07-additional-query-tools-design.md",
+    "pyproject.toml",
+    "scripts/artifact-manifest.toml",
+    "scripts/check_artifacts.py",
+    "src/grundschutz_mcp/__init__.py",
+    "src/grundschutz_mcp/__main__.py",
+    "src/grundschutz_mcp/config.py",
+    "src/grundschutz_mcp/loader.py",
+    "src/grundschutz_mcp/mapper.py",
+    "src/grundschutz_mcp/model.py",
+    "src/grundschutz_mcp/server.py",
+    "tests/conftest.py",
+    "tests/test_check_artifacts.py",
+    "tests/test_loader.py",
+    "tests/test_mapper.py",
+    "tests/test_schema.py",
+    "tests/test_server.py",
+]

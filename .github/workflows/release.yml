@@ -25,8 +25,18 @@ jobs:
           test "v$ver" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != version v$ver"; exit 1; }
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+      - name: Sync
+        # --locked in the one job that signs, for the same reason ci.yml insists
+        # on it: the artifact must be built from the reviewed resolution.
+        run: uv sync --locked
       - name: Build sdist + wheel
         run: uv build
+      - name: Assert the artifacts carry no BSI data
+        # The control ADR-0011's licence argument rests on. Runs before
+        # provenance is attested, so nothing unverified is ever signed. The same
+        # script runs on every pull request in ci.yml, so a breach is caught at
+        # review time rather than when a tag already exists.
+        run: uv run --no-sync python scripts/check_artifacts.py
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
