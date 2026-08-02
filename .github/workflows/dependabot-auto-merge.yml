@@ -11,6 +11,15 @@ name: Dependabot auto-merge
 #   can never run with the write token.
 # - Gated on the `main` ruleset's required status checks: --auto waits for green
 #   CI before merging. Without that ruleset this workflow would merge instantly.
+# - github_actions updates are NOT auto-merged at all, at any update-type. For
+#   `pull_request` GitHub reads the workflow definition from the PR head, so a
+#   bump of an action used by THIS job runs the new, unreviewed SHA right here
+#   with contents:write — and since such a PR does not touch uv.lock, the
+#   package gate below would report clean and the PR would merge itself. That
+#   is the tj-actions class of incident, and the actions are the one dependency
+#   kind this job actually executes, so they get a human. The cost is that
+#   every action bump is a manual merge; verifying the new SHA against the real
+#   tag is the work being paid for.
 
 on: pull_request
 
@@ -31,9 +40,147 @@ jobs:
         id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98  # v3.1.0
 
-      - name: Enable auto-merge for patch/minor
+      - name: Check whether the lock gains packages
+        id: lock
         if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The update-type above describes only the DIRECT dependency, so a patch
+        # or minor bump can still drag arbitrary new packages into the tree: the
+        # mcp 1.28.1 -> 2.0.0 bump added five, one of them a whole second
+        # HTTP/TLS stack. A new package is new attack surface and a new CVE feed,
+        # which is a human decision, not a resolver's.
+        #
+        # Compare the two name SETS rather than the diff. Reading added `+name`
+        # lines out of a patch is wrong when a bump also removes packages: diff
+        # alignment across deleted [[package]] blocks re-emits existing names as
+        # additions, so the verdict stays safe but the reported names are junk.
+        #
+        # Both files are fetched as raw API data. PR code is still never checked
+        # out or executed by this job, so nothing here brings untrusted content
+        # within reach of the write token. (Caveat that predates this step: for
+        # `pull_request` GitHub takes the workflow definition itself from the PR
+        # head, so an action bump auto-merging itself is a separate exposure --
+        # see the note in the safety model above.)
+        run: |
+          set -euo pipefail
+
+          names_at() {
+            gh api "repos/$REPO/contents/uv.lock?ref=$1" \
+              -H "Accept: application/vnd.github.raw" \
+              | grep -E '^name = "' | sed 's/^name = "//; s/"$//' | sort -u
+          }
+
+          # A lock with no packages means the fetch or the parse went wrong, not
+          # that the tree is empty. Fail rather than report a clean gate.
+          base="$(names_at "$BASE_SHA")"
+          head="$(names_at "$HEAD_SHA")"
+          if [ -z "$base" ] || [ -z "$head" ]; then
+            echo "::error::no package names parsed from uv.lock — cannot judge the lock" >&2
+            exit 2
+          fi
+
+          added="$(comm -13 <(printf '%s\n' "$base") <(printf '%s\n' "$head"))"
+
+          if [ -z "$added" ]; then
+            echo "uv.lock gains no packages."
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "new packages in uv.lock:"
+          printf '%s\n' "$added" | sed 's/^/  /'
+
+          # uv normalizes names to [a-z0-9._-]; anything else means the parse
+          # drifted, and passing it on would put unvalidated text into a
+          # GITHUB_OUTPUT heredoc.
+          if printf '%s\n' "$added" | grep -qvE '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$'; then
+            echo "::error::implausible package name parsed from uv.lock" >&2
+            exit 2
+          fi
+
+          delim="ghout-$(openssl rand -hex 16)"
+          {
+            echo "new_packages<<$delim"
+            printf '%s\n' "$added"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+          echo "clean=false" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge for patch/minor
+        # The update-type restriction is restated rather than inherited from the
+        # lock step: relying on that step's `if:` to also bound what may merge
+        # would let a later edit there silently widen this gate.
+        if: |
+          steps.lock.outputs.clean == 'true' &&
+          steps.meta.outputs.package-ecosystem != 'github_actions' &&
+          (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+           steps.meta.outputs.update-type == 'version-update:semver-minor')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
+
+      - name: Explain why auto-merge was withheld
+        # Both withholding reasons, so a held PR is never silently held. Majors
+        # are excluded on purpose: they were never auto-merged and never
+        # commented, and that is unchanged.
+        if: |
+          steps.lock.outputs.clean == 'false' ||
+          (steps.meta.outputs.package-ecosystem == 'github_actions' &&
+           (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor'))
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          NEW_PACKAGES: ${{ steps.lock.outputs.new_packages }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        # Left open for review rather than failed: the PR is legitimate, it just
+        # is not the kind that may land unattended. A red check would claim the
+        # tree is broken, which it is not.
+        run: |
+          set -euo pipefail
+
+          # `pull_request` also fires on synchronize, and Dependabot force-pushes
+          # its rebases, so comment once per PR instead of on every push.
+          marker="<!-- lock-gate -->"
+          if gh pr view "$PR_URL" --json comments --jq '.comments[].body' \
+            | grep -qF "$marker"; then
+            echo "Already explained on this PR — not commenting again."
+            exit 0
+          fi
+
+          if [ "$ECOSYSTEM" = "github_actions" ]; then
+            reason="$(printf '%s\n' \
+              "Auto-merge zurückgehalten: Action-Updates werden grundsätzlich von" \
+              "Hand gemergt." \
+              "" \
+              "Bei \`pull_request\` liest GitHub die Workflow-Definition vom PR-Head." \
+              "Ein Bump einer Action, die der Auto-Merge-Job selbst benutzt, würde" \
+              "die neue SHA also genau hier mit \`contents: write\` ausführen — und" \
+              "weil so ein PR \`uv.lock\` nicht anfasst, greift das Paket-Gate nicht." \
+              "" \
+              "Zu prüfen: die gepinnte SHA gegen den echten Tag im Upstream-Repo" \
+              "halten (nicht nur den Kommentar lesen) und die Änderungen der Action" \
+              "sichten, dann von Hand mergen.")"
+          else
+            reason="$(printf '%s\n' \
+              "Auto-merge zurückgehalten: dieses Update bringt neue Pakete in \`uv.lock\`." \
+              "" \
+              '```' \
+              "$NEW_PACKAGES" \
+              '```' \
+              "" \
+              "Der Update-Type betrifft nur die *direkte* Dependency — transitive" \
+              "Neuzugänge sind zusätzliche Angriffsfläche und ein zusätzlicher" \
+              "CVE-Kanal und brauchen einen Blick: Provenance prüfen (PyPI-" \
+              "Attestations) und Lizenz auf Vereinbarkeit mit unserer Apache-2.0-" \
+              "Distribution prüfen (Copyleft wäre das Problem; die CC-BY-SA-Grenze" \
+              "aus ADR-0006 betrifft nur die BSI-Daten, nicht Dependencies)," \
+              "dann von Hand mergen.")"
+          fi
+
+          gh pr comment "$PR_URL" --body "$(printf '%s\n%s\n' "$marker" "$reason")"
