@@ -24,18 +24,27 @@ first (see docs/adr/README.md).
 3. **Tools touch the model, never raw dicts.** `server.py` tool bodies operate
    on `Requirement`/`Catalog`, never on parsed JSON.
 4. **BSI requirement texts stay German.** The `text` field is the original
-   wording. Never translate, summarize, or paraphrase requirement content.
-5. **Data is loaded at runtime from the pinned commit and passed through
-   unmodified.** Never vendor or ship a transformed BSI data artifact in the
-   package. That would trigger CC BY-SA share-alike on the data and muddy the
-   license boundary.
+   German wording, with `{{ insert: param, <id> }}` spans resolved to the value
+   the BSI defines for that parameter (ADR-0009). Never translate, summarize, or
+   paraphrase requirement content.
+5. **Data is loaded at runtime from the pinned commit.** `title`, `text` and
+   `guidance` are the upstream prose byte-for-byte, except that
+   `{{ insert: param, <id> }}` spans are replaced per ADR-0009. Projecting the
+   non-prose props and links (`module`, `security_level`, `effort_level`,
+   `tags`, `related`, `required`) into the model is not a content
+   transformation; any new field carrying BSI sentences is. **Nothing derived
+   from BSI content is written to disk or shipped in the package** — that clause
+   is what keeps CC BY-SA share-alike off the code. Any other difference between
+   upstream prose and returned text, any on-disk cache, and any field computed
+   from prose needs its own ADR.
 6. **Fail loudly.** The mapper raises `OscalMappingError` with a path on any
    unexpected shape. Never return silently wrong or partial data.
 7. **License boundary is sacred.** Code is Apache 2.0; BSI data is CC BY-SA 4.0
    with attribution in NOTICE. Keep them separate.
 
-Invariant-to-ADR map: (1,3) -> ADR-0003, (2) -> ADR-0004, (4) -> ADR-0005,
-(5) -> ADR-0002, (6) -> ADR-0003/0002, (7) -> ADR-0006. Stack -> ADR-0007.
+Invariant-to-ADR map: (1,3) -> ADR-0003, (2) -> ADR-0004,
+(4) -> ADR-0005/0009, (5) -> ADR-0002/0006/0009/0011, (6) -> ADR-0003/0002,
+(7) -> ADR-0006/0011. Stack -> ADR-0007.
 
 ## Commands
 - Setup:   `uv sync --extra dev`

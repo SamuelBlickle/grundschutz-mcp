@@ -1,15 +1,16 @@
 # 0002. Load BSI data at runtime from a pinned commit
 
-- Status: accepted
+- Status: accepted (refined by ADR-0011 on the scope of "unmodified")
 - Date: 2026-06-06
 
-> **Amendment (2026-08-02):** "unmodified" below is too strong. ADR-0009 later
+> **Amendment (2026-08-02):** "unmodified" is too strong — in the Decision as
+> well as the Rationale below. ADR-0009 later
 > sanctioned resolving OSCAL parameter placeholders in the requirement prose, so
 > the pass-through is not literal. The licence conclusion is unaffected, because
 > it never rested on "we do not modify" but on "we ship no transformed artifact"
 > — the substitution happens in memory, in the user's own process, and nothing
 > derived is packaged. Read the rationale below with that substitution excepted;
-> NOTICE states it for redistributors.
+> NOTICE states it for redistributors, and ADR-0011 records the corrected scope.
 
 ## Context and problem statement
 The server needs the BSI Grundschutz++ compendium. The BSI publishes it as
