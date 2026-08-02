@@ -53,12 +53,25 @@ jobs:
           BSI_REPO: ${{ steps.cfg.outputs.repo }}
           PIN: ${{ steps.cfg.outputs.pin }}
           CPATH: ${{ steps.cfg.outputs.path }}
-        # git is content-addressed: identical file content => identical blob SHA.
-        # Comparing blob SHAs needs only tree metadata, never the (large) content.
+        # Two stages. git is content-addressed, so equal blob SHAs prove equal
+        # bytes from tree metadata alone -- no download. Unequal blob SHAs do NOT
+        # prove the requirements changed, because the file is a generated artifact
+        # republished on a schedule, so that case falls through to a normalized
+        # content digest before anything is reported.
         run: |
           set -euo pipefail
           default_branch="$(gh api "repos/$BSI_REPO" --jq .default_branch)"
           echo "Upstream default branch: $default_branch"
+
+          # An empty blob SHA is now load-bearing -- it is the sole evidence for
+          # "the BSI moved the file" -- so every other way of arriving at an
+          # empty result has to be ruled out first. A refname the API would not
+          # have produced is one of them.
+          case "$default_branch" in
+            ""|*[!A-Za-z0-9._/-]*)
+              echo "::error::implausible upstream default branch: '$default_branch'" >&2
+              exit 5 ;;
+          esac
 
           blob_at() {
             local ref="$1" tree
@@ -67,7 +80,28 @@ jobs:
               echo "::error::tree truncated for $ref — cannot compare reliably" >&2
               exit 3
             fi
-            jq -r --arg p "$CPATH" '.tree[] | select(.path==$p) | .sha' <<<"$tree"
+            # type=="blob" is deliberate: a tree or submodule at that path would
+            # otherwise yield a SHA that is not the file's, and the empty-vs-set
+            # distinction below would report the wrong drift kind with confidence.
+            jq -r --arg p "$CPATH" '.tree[] | select(.path==$p and .type=="blob") | .sha' <<<"$tree"
+          }
+
+          # Only consulted when the blob SHAs already disagree, so the common
+          # case stays two metadata calls and never downloads the catalog.
+          # Normalizing away uuid, the publication timestamps and back-matter is
+          # what separates "the BSI republished the generated artifact" from
+          # "the BSI changed the requirements"; none of those fields reaches the
+          # internal model (see ADR-0008), so they cannot hide consumed drift.
+          content_digest_at() {
+            gh api "repos/$BSI_REPO/contents/$CPATH?ref=$1" \
+              -H "Accept: application/vnd.github.raw" \
+              | jq -S 'del(.catalog.uuid,
+                           .catalog.metadata.version,
+                           .catalog.metadata["last-modified"],
+                           .catalog.metadata["document-ids"],
+                           .catalog.metadata.links,
+                           .catalog["back-matter"])' \
+              | sha256sum | cut -d" " -f1
           }
 
           pinned_sha="$(blob_at "$PIN")"
@@ -75,15 +109,56 @@ jobs:
           echo "pinned blob: ${pinned_sha:-<missing>}"
           echo "head blob:   ${head_sha:-<missing>}"
 
-          if [ -z "$pinned_sha" ] || [ -z "$head_sha" ]; then
-            echo "::error::compendium path not found in tree — upstream path drift?" >&2
+          # The two "missing" cases are not the same failure and must not share
+          # an exit path. The pin is immutable: if the path is absent *there*,
+          # config.py describes a file the BSI never had at that commit, which
+          # is our bug and nothing a tracking issue would help with.
+          if [ -z "$pinned_sha" ]; then
+            echo "::error::compendium path absent at the pinned commit — BSI_COMPENDIUM_PATH/BSI_PINNED_COMMIT in config.py disagree with the upstream repo" >&2
             exit 4
           fi
 
-          if [ "$pinned_sha" = "$head_sha" ]; then
+          # Absent at HEAD means the BSI moved, renamed or withdrew the file.
+          # That is drift -- the most consequential kind, since it silently ends
+          # the update path for the data we ship -- so it has to raise the
+          # tracking issue. Failing the run here would report the watcher as
+          # broken and leave the actual drift unreported.
+          if [ -z "$head_sha" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "drift=path" >> "$GITHUB_OUTPUT"
+          elif [ "$pinned_sha" = "$head_sha" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            # Blob SHAs differ, which does not yet mean the requirements did.
+            # The BSI publishes this file from an automated rolling job and every
+            # republish mints a fresh catalog uuid and last-modified even when
+            # nothing else changed (verified: 7ea20849, d304c60c and 47de2824 are
+            # byte-different blobs with identical normalized content). Reporting
+            # those would train the maintainer to dismiss the label, and a real
+            # change such as a withdrawn requirement would drown in the noise.
+            #
+            # Assign before comparing: a command substitution *inside* an `if`
+            # test is exempt from set -e, so computing the digests in the
+            # condition would let two failed fetches compare equal and report
+            # "no drift" -- fail-open on the one signal this job exists to give.
+            pinned_digest="$(content_digest_at "$PIN")"
+            head_digest="$(content_digest_at "$default_branch")"
+            for d in "$pinned_digest" "$head_digest"; do
+              if ! printf '%s' "$d" | grep -qE '^[0-9a-f]{64}$'; then
+                echo "::error::could not compute a content digest — refusing to judge drift" >&2
+                exit 6
+              fi
+            done
+            echo "pinned content digest: $pinned_digest"
+            echo "head content digest:   $head_digest"
+
+            if [ "$pinned_digest" = "$head_digest" ]; then
+              echo "Blob differs but normalized content is identical — republish only, no drift."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "drift=content" >> "$GITHUB_OUTPUT"
+            fi
           fi
           echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
 
@@ -95,43 +170,85 @@ jobs:
           PIN: ${{ steps.cfg.outputs.pin }}
           CPATH: ${{ steps.cfg.outputs.path }}
           DEFAULT_BRANCH: ${{ steps.diff.outputs.default_branch }}
+          DRIFT: ${{ steps.diff.outputs.drift }}
         run: |
           set -euo pipefail
-          gh label create upstream-drift \
-            --color B60205 \
-            --description "BSI changed the pinned compendium upstream" \
-            >/dev/null 2>&1 || true
+          # Dedupe per drift kind, not per label. The two kinds have different
+          # remediation, and a path move can begin while a content-drift issue
+          # is still open -- which is exactly what the BSI did. Deduping on the
+          # shared label alone would let the older, milder issue suppress the
+          # newer, more serious one and leave the run green with the real
+          # condition unrecorded.
+          kind_label="upstream-drift-$DRIFT"
+          for l in upstream-drift "$kind_label"; do
+            gh label create "$l" \
+              --color B60205 \
+              --description "BSI changed the pinned compendium upstream" \
+              >/dev/null 2>&1 || true
+          done
 
-          existing="$(gh issue list --label upstream-drift --state open \
+          existing="$(gh issue list --label "$kind_label" --state open \
             --json number --jq '.[0].number' 2>/dev/null || true)"
           if [ -n "$existing" ]; then
-            echo "Tracking issue #$existing already open — nothing to do."
+            echo "Tracking issue #$existing for drift=$DRIFT already open — nothing to do."
             exit 0
           fi
 
-          history_url="https://github.com/$BSI_REPO/commits/$DEFAULT_BRANCH/$CPATH"
+          if [ "$DRIFT" = "path" ]; then
+            title="BSI hat den Pfad des Grundschutz++-Compendiums geändert"
+            lead="$(printf '%s\n' \
+              "Die ausgelieferte Compendium-Datei existiert unter dem gepinnten Pfad" \
+              "**auf \`$DEFAULT_BRANCH\` nicht mehr** — das BSI hat sie verschoben," \
+              "umbenannt oder zurückgezogen." \
+              "" \
+              "Damit ist der Update-Pfad für unsere Daten unterbrochen: der gepinnte" \
+              "Commit bleibt gültig und der Server läuft weiter, aber der Watcher kann" \
+              "künftige Änderungen nicht mehr sehen, bis der Pfad neu aufgelöst ist." \
+              "" \
+              "> Den neuen Pfad **nicht raten** — im Upstream-Tree verifizieren.")"
+            link="- **Upstream-Tree:** https://github.com/$BSI_REPO/tree/$DEFAULT_BRANCH"
+            # Pfad und Pin gehören in denselben Commit: der Watcher prüft den
+            # Pfad gegen den gepinnten Commit, ein Pfad ohne passenden Pin ist
+            # für ihn ein Konfigurationsfehler und bricht mit exit 4 ab. Der
+            # Schritt steht vor /verify-oscal, weil verifiziert nur werden
+            # kann, was vorher aufgelöst wurde.
+            steps=("- [ ] Neuen Pfad im Upstream-Tree verifizieren und \`BSI_COMPENDIUM_PATH\` **gemeinsam mit** \`BSI_PINNED_COMMIT\` in einem Commit setzen (das Paar muss kohärent bleiben)"
+                   "- [ ] \`/verify-oscal\` gegen den neuen Stand laufen lassen")
+          else
+            title="BSI hat das Grundschutz++-Compendium aktualisiert"
+            lead="$(printf '%s\n' \
+              "Der Upstream-Watcher hat festgestellt, dass das BSI die ausgelieferte" \
+              "Compendium-Datei seit unserem gepinnten Stand geändert hat.")"
+            link="- **Datei-Historie:** https://github.com/$BSI_REPO/commits/$DEFAULT_BRANCH/$CPATH"
+            # Erst verifizieren, dann pinnen. Der Pin ist die Quelle, aus der
+            # das Paket zur Laufzeit lädt -- ein Pin, der seiner Prüfung
+            # vorauseilt, ist kurzzeitig eine auslieferbare ungeprüfte Quelle.
+            steps=("- [ ] \`/verify-oscal\` gegen den neuen Stand laufen lassen"
+                   "- [ ] \`BSI_PINNED_COMMIT\` in \`src/grundschutz_mcp/config.py\` bumpen")
+          fi
+
+          steps+=("- [ ] Offline- und Network-Tests grün"
+                  "- [ ] Ggf. \`mapper.py\` an Schema-Änderungen anpassen"
+                  "- [ ] Release gemäß VERSIONING.md (Daten-Update ≠ SemVer-Bruch)")
+
           body="$(printf '%s\n' \
-            "Der Upstream-Watcher hat festgestellt, dass das BSI die ausgelieferte" \
-            "Compendium-Datei seit unserem gepinnten Stand geändert hat." \
+            "$lead" \
             "" \
             "- **Gepinnter Commit:** \`$PIN\`" \
-            "- **Datei:** \`$CPATH\`" \
+            "- **Gepinnter Pfad:** \`$CPATH\`" \
             "- **Upstream-Repo:** https://github.com/$BSI_REPO" \
-            "- **Datei-Historie:** $history_url" \
+            "$link" \
             "" \
             "### Nächste Schritte (siehe RELEASING.md / VERSIONING.md)" \
-            "- [ ] \`/verify-oscal\` gegen den neuen Stand laufen lassen" \
-            "- [ ] \`BSI_PINNED_COMMIT\` in \`src/grundschutz_mcp/config.py\` bumpen" \
-            "- [ ] Offline- und Network-Tests grün" \
-            "- [ ] Ggf. \`mapper.py\` an Schema-Änderungen anpassen" \
-            "- [ ] Release gemäß VERSIONING.md (Daten-Update ≠ SemVer-Bruch)" \
+            "${steps[@]}" \
             "" \
             "_Wird automatisch geschlossen, sobald der Pin wieder mit dem" \
             "Upstream-Stand übereinstimmt._")"
 
           gh issue create \
             --label upstream-drift \
-            --title "BSI hat das Grundschutz++-Compendium aktualisiert" \
+            --label "$kind_label" \
+            --title "$title" \
             --body "$body"
 
       - name: Close stale tracking issue (self-heal)
