@@ -8,9 +8,18 @@ Sicherheit in der Informationstechnik (BSI).
 That data is licensed under Creative Commons Attribution-ShareAlike 4.0
 International (CC BY-SA 4.0): https://creativecommons.org/licenses/by-sa/4.0/
 
-The data is loaded at runtime from a pinned commit and passed through
-unmodified by this software. This project is not affiliated with, endorsed by,
-or certified by the BSI.
+The data is loaded at runtime from a pinned commit and passed through by this
+software with one modification to the requirement prose: OSCAL parameter
+placeholders ("{{ insert: param, ... }}") are replaced with the text the BSI
+defines for that parameter -- its OSCAL "values" entry where one exists,
+otherwise the parameter's "label", which at the pinned commit is by far the
+usual case. A label marks a value the BSI left to be fixed downstream, in an
+adopting profile or by the using organisation, so the substituted span states a
+placeholder rather than a settled value. The requirement it sits in is
+unaffected. The German wording is otherwise verbatim -- nothing is translated,
+summarised, or paraphrased.
+
+This project is not affiliated with, endorsed by, or certified by the BSI.
 
 The source code of grundschutz-mcp is licensed under the Apache License 2.0
 (see LICENSE).

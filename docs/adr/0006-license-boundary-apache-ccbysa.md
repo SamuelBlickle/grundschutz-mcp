@@ -3,6 +3,16 @@
 - Status: accepted
 - Date: 2026-06-06
 
+> **Amendment (2026-08-02):** the decision stands; one clause of its rationale
+> does not. "The code never modifies ... a transformed copy of the data" is
+> false since ADR-0009: the mapper resolves OSCAL parameter placeholders in the
+> requirement prose. What actually keeps share-alike off the code is the next
+> sentence — we ship no transformed data artifact — and that is still true, since
+> the substitution happens in memory in the user's own process. We therefore
+> Share no Licensed Material and CC BY-SA 4.0 §3(a) does not attach to our
+> distribution at all; NOTICE records the modification regardless, so that a
+> downstream redistributor can discharge their own §3(a)(1)(B) duty.
+
 ## Context and problem statement
 The BSI data is licensed CC BY-SA 4.0, whose share-alike term can extend to
 derivative works. The project's own code should be permissively licensed to
