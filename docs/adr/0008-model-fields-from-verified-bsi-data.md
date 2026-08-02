@@ -7,7 +7,7 @@
 > to `get_cross_references` (pre-1.0 API polish). This record is left unchanged
 > as a historical artifact; see VERSIONING.md for the current tool surface.
 
-> **Update (2026-08-01):** two premises below are no longer true upstream, so
+> **Update (2026-08-02):** two premises below are no longer true upstream, so
 > read them as findings from 2026-06-06 rather than as current facts.
 >
 > 1. The verified artifact moved. `Anwenderkataloge/Grundschutz++/Grundschutz++-catalog.json`
