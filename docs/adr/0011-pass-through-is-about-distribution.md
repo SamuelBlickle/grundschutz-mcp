@@ -116,7 +116,9 @@ its own record.
   reviewed diff rather than a side effect of the working tree. Behind that sit
   size caps, a 12-word prose matcher over letter-only tokens, an artifact-wide
   census of requirement ids and titles, and an assertion that LICENSE and NOTICE
-  are present.
+  are present. The publish job then re-checks the artifacts it downloads against
+  digests the build job recorded, so the guarantee covers the bytes PyPI
+  receives rather than ending at the bytes that were attested.
 
   The manifest is primary because content detection alone was not enough, and
   the record should say why rather than leave the next maintainer to rediscover

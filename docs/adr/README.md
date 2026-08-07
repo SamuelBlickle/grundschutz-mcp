@@ -4,8 +4,12 @@ This directory records the significant architectural decisions for
 grundschutz-mcp, using the [MADR](https://adr.github.io/madr/) format.
 
 An ADR captures one decision: its context, the options considered, the choice,
-and its consequences. ADRs are immutable once accepted. To change a decision,
-write a new ADR that supersedes the old one and update the old one's status.
+and its consequences. A **decision** is immutable once accepted: to change one,
+write a new ADR that supersedes or refines the old one and update the old one's
+status. Statements of *fact* — a Consequences section that inventories what CI
+actually enforces, a premise upstream has since invalidated — are corrected in
+place with a dated amendment block, because a record that misdescribes reality
+is worse than one that shows its history. See ADR-0002, 0006, 0008 and 0011.
 
 The architecture invariants enforced in CLAUDE.md and by the hooks trace back to
 these records. If you want to change an invariant, you are changing a decision:

@@ -41,8 +41,11 @@ The first public release is `1.0.0`.
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-4. The workflow builds, attests provenance, and (after the `pypi` environment
-   approval, if configured) publishes to PyPI with Sigstore signatures.
+4. The workflow builds, asserts the artifacts carry no BSI content
+   (`scripts/check_artifacts.py`, see ADR-0011), records their digests, attests
+   provenance, and — after the `pypi` environment approval — re-checks the
+   downloaded artifacts against those digests and their attestation before
+   publishing to PyPI with Sigstore signatures.
 5. Verify: the package appears on PyPI, `uvx grundschutz-mcp` runs, and the
    provenance/signatures are attached.
 

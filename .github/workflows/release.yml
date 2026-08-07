@@ -1,7 +1,8 @@
 name: Release
 
-# Tag-triggered. Building is decoupled from publishing so the only job holding
-# OIDC `id-token: write` is the minimal publish step.
+# Tag-triggered. Building is decoupled from publishing so the job that can mint a
+# PyPI-publishing OIDC token does nothing but download, verify and upload. (Both
+# jobs hold `id-token: write`: the build job needs it for keyless attestation.)
 on:
   push:
     tags:
@@ -13,6 +14,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      # Carried to publish through the workflow-run graph rather than the
+      # artifact store, so whoever could rewrite dist/ between the jobs cannot
+      # rewrite the digests it is checked against.
+      digests: ${{ steps.digests.outputs.sha256 }}
     permissions:
       contents: read
       id-token: write       # keyless build-provenance attestation (OIDC)
@@ -37,6 +43,13 @@ jobs:
         # script runs on every pull request in ci.yml, so a breach is caught at
         # review time rather than when a tag already exists.
         run: uv run --no-sync python scripts/check_artifacts.py
+      - name: Record the checked digests
+        id: digests
+        # After the content check, before anything leaves this job.
+        run: |
+          set -euo pipefail
+          echo "sha256=$(sha256sum dist/*.whl dist/*.tar.gz | base64 | tr -d '\n')" \
+            >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
@@ -59,12 +72,52 @@ jobs:
       url: https://pypi.org/p/grundschutz-mcp
     permissions:
       id-token: write       # OIDC for PyPI Trusted Publishing + Sigstore signing
+      contents: read        # gh attestation verify reads the attestation API
+      attestations: read
     steps:
       - name: Download dist artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: dist
           path: dist/
+      - name: Verify the artifacts are the ones the build job checked
+        # The build job checks the artifacts and then attests them, but this job
+        # re-materialises dist/ from the artifact store. Two independent bindings:
+        #
+        # The digest comparison is the strong one -- it pins these bytes to *this
+        # run*. `gh attestation verify` alone would not: --repo constrains only
+        # the signing certificate's source repository, so an artifact attested by
+        # any earlier run of this workflow, including a release whose environment
+        # approval was denied, would satisfy it.
+        #
+        # The attestation check is kept as well, for the signature chain and the
+        # build environment.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGESTS: ${{ needs.build.outputs.digests }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          everything=(dist/*)
+          # Shape, not just count: twine is handed the whole directory, so "two
+          # files" must mean one wheel and one sdist and nothing else. An empty
+          # glob would otherwise make every check below a silent no-op.
+          if [ "${#wheels[@]}" -ne 1 ] || [ "${#sdists[@]}" -ne 1 ] || [ "${#everything[@]}" -ne 2 ]; then
+            echo "::error::expected exactly one wheel and one sdist in dist/" >&2
+            exit 1
+          fi
+
+          test -n "$DIGESTS" || { echo "::error::build job recorded no digests" >&2; exit 1; }
+          printf '%s' "$DIGESTS" | base64 -d | sha256sum -c -
+
+          for artifact in "${wheels[@]}" "${sdists[@]}"; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --deny-self-hosted-runners
+          done
       - name: Publish to PyPI (Trusted Publishing, tokenless)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         # No password/token: uses OIDC Trusted Publishing and Sigstore-signs the
