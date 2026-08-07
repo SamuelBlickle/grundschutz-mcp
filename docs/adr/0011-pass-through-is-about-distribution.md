@@ -108,14 +108,39 @@ its own record.
 - This record changes no runtime behaviour. `mapper.py`, `model.py` and
   `server.py` are untouched; `loader.py` changes only its docstring, in the same
   PR stack.
-- Automatically enforced: only the shipping clause, and only partly — the
-  `enforce_layering` hook blocks `src/grundschutz_mcp/**.{json,xml}`. A data file
-  with another extension, an embedded literal, or a `force-include` would pass.
+- Automatically enforced, **the shipping clause**: `scripts/check_artifacts.py`
+  runs on every pull request and again in the release workflow before provenance
+  is attested. Its primary control is `scripts/artifact-manifest.toml`, which
+  lists the exact members of each artifact: a file that is not listed cannot
+  ship, whatever it contains and however it is encoded, and adding one is a
+  reviewed diff rather than a side effect of the working tree. Behind that sit
+  size caps, a 12-word prose matcher over letter-only tokens, an artifact-wide
+  census of requirement ids and titles, and an assertion that LICENSE and NOTICE
+  are present.
+
+  The manifest is primary because content detection alone was not enough, and
+  the record should say why rather than leave the next maintainer to rediscover
+  it. Four earlier versions of the matcher were each defeated in review with a
+  real build: caps calibrated against the raw 5.4 MB rather than the 514 KB it
+  gzips to; byte matching beaten by `textwrap.fill`; whitespace-normalised
+  character shingles beaten by a Markdown blockquote; and word n-grams whose
+  length had been calibrated against `guidance` (97% of the corpus) while 302 of
+  652 `Requirement.text` values are shorter than the needle and produced none.
+  Detecting arbitrary content in arbitrary files is unbounded; constraining
+  which files exist is not.
+
 - **Not automatically enforced:** a second transformation of BSI content, an
   on-disk cache, and a field computed from prose. Those rest on the
   architecture-guardian and security-reviewer gates, which are review, not CI.
-  The one machine check that does cover content is the network drift test's
-  assertion that no `{{ insert: param` survives into the model.
+  Within an already-approved file the matcher is also best-effort: it does not
+  see runs shorter than 12 words, re-encoded content, or prose broken up with
+  invisible characters — the caps are what stand behind it there. This control
+  is built to stop an accidental leak and to make a deliberate addition visible,
+  not to withstand someone with commit rights, who can edit the control itself.
+
+  Two machine checks cover content elsewhere: the network drift test asserts no
+  `{{ insert: param` survives into the model, and that prose is byte-identical to
+  upstream wherever no parameter is inserted.
 
 ## Revisit when
 A second transformation of BSI content is proposed — a normalisation, a

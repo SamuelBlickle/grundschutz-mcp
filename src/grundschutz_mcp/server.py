@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
+from . import __version__
 from .loader import load_catalog
 from .model import Catalog, CatalogMetadata, CatalogStats, ModuleSummary, Requirement
 
@@ -28,7 +29,11 @@ def _safe_log(value: str) -> str:
     return value.translate(_CONTROL_ESCAPE)
 
 
-mcp = MCPServer("grundschutz")
+# version is advertised in the MCP handshake (serverInfo.version). Without it
+# the SDK reports an empty string, so a client cannot tell which build it is
+# talking to -- and for a compliance tool "which build" also implies which
+# pinned BSI data, since the pin ships with the package.
+mcp = MCPServer("grundschutz", version=__version__)
 
 _catalog: Catalog | None = None
 
