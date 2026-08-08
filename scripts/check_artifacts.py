@@ -22,7 +22,7 @@ files:
   shipped 548 KB as "clean", because `> ` is not whitespace.
 - v4 matched 12-word n-grams. That survives any reformatting, but the needle
   length had been calibrated against `guidance`, which is 97% of the corpus:
-  302 of 652 `Requirement.text` values are shorter than 12 words and produced no
+  422 of 1000 `Requirement.text` values are shorter than 12 words and produced no
   needle at all, so one requirement per file shipped 242 normative sentences
   verbatim. A zlib+base64 copy of the whole catalogue also fit under the caps.
 
@@ -85,10 +85,12 @@ DIST_INFO = re.compile(r"^grundschutz_mcp-[^/]+\.dist-info/")
 WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 NGRAM = 12
 
-# 55372 needles at the current pin. A degenerate but parseable catalog would
-# otherwise yield none and pass vacuously, which is the silent degradation this
-# control exists to avoid.
-MIN_NEEDLES = 45000
+# 79815 needles at the current pin (1000 requirements). Recalibrated with the
+# corpus: at the old floor of 45000, a regression back to the pre-fix walk --
+# which read 652 of 1000 controls and still yielded ~55000 needles -- would have
+# passed. A floor sized against a smaller corpus stops detecting the exact
+# degradation it exists to catch.
+MIN_NEEDLES = 70000
 
 # ADR-0011 accounts for README.md quoting a requirement as an example. Keys are
 # canonical member paths, not basenames: the sdist ships a second README.md under

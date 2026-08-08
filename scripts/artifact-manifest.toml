@@ -47,6 +47,7 @@ sdist = [
     "docs/adr/0009-resolve-oscal-parameter-placeholders.md",
     "docs/adr/0010-versioning-semver-decoupled-from-bsi-data.md",
     "docs/adr/0011-pass-through-is-about-distribution.md",
+    "docs/adr/0012-fail-loudly-needs-a-verified-corpus.md",
     "docs/adr/README.md",
     "docs/adr/template.md",
     "docs/superpowers/specs/2026-06-07-additional-query-tools-design.md",

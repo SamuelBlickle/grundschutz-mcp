@@ -27,6 +27,7 @@ write the superseding ADR first.
 - [0009](0009-resolve-oscal-parameter-placeholders.md) - Resolve OSCAL parameter placeholders (refines 0005)
 - [0010](0010-versioning-semver-decoupled-from-bsi-data.md) - SemVer for the software, decoupled from the BSI data version
 - [0011](0011-pass-through-is-about-distribution.md) - The pass-through guarantee is about distribution, not literal immutability (refines 0002, 0006)
+- [0012](0012-fail-loudly-needs-a-verified-corpus.md) - Fail loudly means fail on unverified shapes, and completeness is part of it
 
 ## Template
 Copy [template.md](template.md) for new records. Number sequentially.

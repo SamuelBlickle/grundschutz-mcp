@@ -7,6 +7,19 @@
 > to `get_cross_references` (pre-1.0 API polish). This record is left unchanged
 > as a historical artifact; see VERSIONING.md for the current tool surface.
 
+> **Update (2026-08-05):** the evidence base for everything below was 61% of the
+> corpus. This record and the 2026-08-02 update both verified their field
+> decisions against 651 and 652 controls -- the controls sitting directly under a
+> group. The mapper never recursed into `control["controls"]`, so 348 nested
+> requirements were never examined by the check that produced these findings.
+>
+> Re-verified across all 1000 controls: every field decision here still holds,
+> and `sec_level`/`effort_level` are present on the nested controls too. One did
+> not hold -- two nested requirements carry no `guidance` part at all, which is
+> the finding ADR-0012 was written about. Condition 1 of ADR-0012 (verify against
+> the *complete* corpus, not whichever subset the walk reaches) is applied
+> retroactively here.
+
 > **Update (2026-08-02):** two premises below are no longer true upstream, so
 > read them as findings from 2026-06-06 rather than as current facts.
 >

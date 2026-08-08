@@ -57,4 +57,15 @@ async def load_catalog() -> Catalog:
                 )
             chunks.append(chunk)
     raw = b"".join(chunks)
-    return map_catalog(json.loads(raw), commit=config.BSI_PINNED_COMMIT, repo=config.BSI_REPO)
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        # The mapper's depth cap bounds its own walk, but a document nested
+        # deeply enough exhausts the interpreter here first, before the mapper
+        # ever runs. Converting it keeps the promise that a malformed compendium
+        # surfaces as an OscalMappingError with a path (Invariant 6) rather than
+        # as an interpreter-level error the caller cannot interpret.
+        raise OscalMappingError(
+            f"compendium is not parseable JSON: {type(exc).__name__}", path="<download>"
+        ) from None
+    return map_catalog(parsed, commit=config.BSI_PINNED_COMMIT, repo=config.BSI_REPO)
