@@ -43,7 +43,7 @@ first (see docs/adr/README.md).
    with attribution in NOTICE. Keep them separate.
 
 Invariant-to-ADR map: (1,3) -> ADR-0003, (2) -> ADR-0004,
-(4) -> ADR-0005/0009, (5) -> ADR-0002/0006/0009/0011, (6) -> ADR-0003/0002,
+(4) -> ADR-0005/0009, (5) -> ADR-0002/0006/0009/0011, (6) -> ADR-0012/0003/0002,
 (7) -> ADR-0006/0011. Stack -> ADR-0007.
 
 ## Commands

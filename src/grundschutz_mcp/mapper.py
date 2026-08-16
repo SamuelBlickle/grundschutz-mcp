@@ -14,7 +14,18 @@ from typing import Any, Literal, cast
 
 from .model import Catalog, CatalogMetadata, Requirement
 
-_MAX_GROUP_DEPTH = 32
+# Bounds the COMBINED group and control nesting depth. Both are recursive and
+# share one budget: one protection should not need two separately calibrated
+# numbers. Real data nests groups one deep and controls three deep, so 32 is
+# ample headroom. Note the scope: this bounds the *walk*. A document nested
+# deeply enough to exhaust the interpreter fails earlier, in json.loads, which
+# loader.py converts into an OscalMappingError.
+_MAX_NESTING_DEPTH = 32
+
+# The part names the pinned catalog actually uses, verified across all 1000
+# controls. An absent optional part is only benign against a known vocabulary;
+# see `_extract_part_prose`.
+_KNOWN_PART_NAMES = {"statement", "guidance"}
 
 # OSCAL parameter placeholder inside part prose, e.g. "{{ insert: param, gc.1.1-prm1 }}".
 _PARAM_INSERT_RE = re.compile(r"\{\{\s*insert:\s*param,\s*([^}\s]+)\s*\}\}")
@@ -58,12 +69,24 @@ def map_requirement(
     """
     rid = _require(control, "id", path=path)
     title = _require(control, "title", path=f"{path}.title")
+    # str() would turn any JSON value into a plausible-looking id -- a dict
+    # becomes its repr and then a live key in the catalog index and a
+    # cross-reference target. Type it here, where the OSCAL context is still
+    # available for the error message.
+    if not isinstance(rid, str) or not rid.strip():
+        raise OscalMappingError(f"control 'id' must be a non-empty string, got {rid!r}", path=path)
+    if not isinstance(title, str) or not title.strip():
+        raise OscalMappingError(
+            f"control 'title' must be a non-empty string, got {title!r}", path=f"{path}.title"
+        )
 
     # Build the OSCAL parameter resolver once; params are transient (Invariant 2:
     # they are not mirrored into the Requirement model).
     params = _param_values(control, path=f"{path}.params")
     text = _extract_part_prose(control, "statement", params=params, path=f"{path}.parts")
-    guidance = _extract_part_prose(control, "guidance", params=params, path=f"{path}.parts")
+    guidance = _extract_part_prose(
+        control, "guidance", params=params, path=f"{path}.parts", required=False
+    )
     security_level = _extract_security_level(control, path=f"{path}.props")
     effort_level = _extract_effort_level(control, path=f"{path}.props")
     tags = _extract_tags(control, path=f"{path}.props")
@@ -71,8 +94,8 @@ def map_requirement(
     required = _extract_links(control, "required", path=f"{path}.links")
 
     return Requirement(
-        id=str(rid),
-        title=str(title),
+        id=rid,
+        title=title,
         text=text,
         guidance=guidance,
         module=module,
@@ -136,22 +159,69 @@ def _resolve_param_inserts(prose: str, params: dict[str, str], *, path: str) -> 
 
 
 def _extract_part_prose(
-    control: dict[str, Any], part_name: str, *, params: dict[str, str], path: str
+    control: dict[str, Any],
+    part_name: str,
+    *,
+    params: dict[str, str],
+    path: str,
+    required: bool = True,
 ) -> str:
     """Return the non-empty prose of the named part. German, verbatim (Invariant 4).
 
     OSCAL parameter placeholders are resolved to their BSI-defined values; the
     text is otherwise unchanged (see `_resolve_param_inserts`).
+
+    `required=False` distinguishes two shapes that must not be conflated. A part
+    that is *absent from `parts` entirely* is a requirement for which the BSI
+    defines nothing of that kind, and returns "". A part that is *present but
+    blank* is malformed data and still raises, because that is the drift signal
+    Invariant 6 exists to catch. Only `guidance` is optional, and only because
+    the absence is verified against the whole catalog (ADR-0012): two of the
+    ~1000 requirements carry a `statement` and no `guidance` part.
     """
+    names: set[str] = set()
+    found = False
     for raw_part in _require_list(control, "parts", path=path):
         if not isinstance(raw_part, dict):
+            # Recorded, not skipped: an entry that is not an object is an
+            # unreadable part, and reading past it would make the absence below
+            # look verified when it is not.
+            names.add("<non-object>")
             continue
         part = cast("dict[str, Any]", raw_part)
-        if part.get("name") == part_name:
+        name = part.get("name")
+        names.add(name if isinstance(name, str) else "<unnamed>")
+        # A part carrying sub-parts can hide the one we are looking for one level
+        # down. Record that too, so absence is never called verified over a shape
+        # we did not actually look inside.
+        if part.get("parts"):
+            names.add("<nested-parts>")
+        if name == part_name:
+            found = True
             prose = part.get("prose")
             if isinstance(prose, str) and prose.strip():
                 return _resolve_param_inserts(prose, params, path=path)
-    raise OscalMappingError(f"no non-empty '{part_name}' prose found", path=path)
+    if found:
+        # The part is there but carries nothing usable. That is malformed data,
+        # not a requirement the BSI chose not to elaborate, and it stays a hard
+        # error whether or not the part is optional.
+        raise OscalMappingError(f"'{part_name}' part is present but empty", path=path)
+    if required:
+        raise OscalMappingError(f"no '{part_name}' part found", path=path)
+    # Absence is only benign if the whole part vocabulary is one we have
+    # verified. A renamed part, a part missing its `name`, an entry that is not
+    # an object, or a part carrying sub-parts that could hide this one all land
+    # in `names` and fail here, because otherwise the optional path would return
+    # "" for the entire catalog and swallow exactly the drift it must surface
+    # (ADR-0012). The bound in the network drift test is the outer net, not this.
+    unknown = names - _KNOWN_PART_NAMES
+    if unknown:
+        raise OscalMappingError(
+            f"unexpected part names {sorted(unknown)}; cannot treat "
+            f"'{part_name}' as legitimately absent",
+            path=path,
+        )
+    return ""
 
 
 def _extract_security_level(
@@ -235,19 +305,52 @@ def map_metadata(catalog: dict[str, Any], *, commit: str, repo: str, count: int)
     )
 
 
+def _walk_control(
+    control: dict[str, Any], *, module: str, module_title: str, path: str, depth: int
+) -> Iterator[Requirement]:
+    """Yield a control and every requirement nested beneath it.
+
+    OSCAL nests requirements under requirements, and the BSI catalog uses that:
+    348 of ~1000 requirements at the pinned commit sit under another control,
+    up to three levels deep. They are full requirements -- own id, own normative
+    statement, own security and effort levels -- not sub-clauses of their parent,
+    and every cross-reference that used to dangle pointed at one of them.
+
+    `module` and `module_title` are inherited unchanged from the enclosing group.
+    Nesting inside a control does not create a new Baustein, and `module` has
+    meant "enclosing group id" since ADR-0008. The containment relationship
+    itself is deliberately not projected into the model: no tool consumes it, and
+    ADR-0004 admits only fields a tool uses.
+    """
+    if depth > _MAX_NESTING_DEPTH:
+        raise OscalMappingError(f"nesting exceeds {_MAX_NESTING_DEPTH}", path=path)
+    yield map_requirement(control, module=module, module_title=module_title, path=path)
+    for i, nested in enumerate(_require_list(control, "controls", path=path)):
+        if not isinstance(nested, dict):
+            raise OscalMappingError("expected a control object", path=f"{path}.controls[{i}]")
+        yield from _walk_control(
+            cast("dict[str, Any]", nested),
+            module=module,
+            module_title=module_title,
+            path=f"{path}.controls[{i}]",
+            depth=depth + 1,
+        )
+
+
 def _walk_controls(
     group: dict[str, Any], *, module: str, module_title: str, path: str, depth: int = 0
 ) -> Iterator[Requirement]:
-    if depth > _MAX_GROUP_DEPTH:
-        raise OscalMappingError(f"group nesting exceeds {_MAX_GROUP_DEPTH}", path=path)
+    if depth > _MAX_NESTING_DEPTH:
+        raise OscalMappingError(f"nesting exceeds {_MAX_NESTING_DEPTH}", path=path)
     for i, control in enumerate(_require_list(group, "controls", path=path)):
         if not isinstance(control, dict):
             raise OscalMappingError("expected a control object", path=f"{path}.controls[{i}]")
-        yield map_requirement(
+        yield from _walk_control(
             cast("dict[str, Any]", control),
             module=module,
             module_title=module_title,
             path=f"{path}.controls[{i}]",
+            depth=depth + 1,
         )
     for j, sub in enumerate(_require_list(group, "groups", path=path)):
         if not isinstance(sub, dict):
@@ -295,6 +398,19 @@ def map_catalog(raw: object, *, commit: str, repo: str) -> Catalog:
                 path=f"catalog.groups[{i}]",
                 depth=0,
             )
+        )
+    # Catalog indexes by id, so a duplicate would silently keep whichever came
+    # last while every count still reported both. The completeness assertion in
+    # the drift test compares sets and cannot see it, so it is checked here.
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for requirement in requirements:
+        if requirement.id in seen:
+            duplicates.add(requirement.id)
+        seen.add(requirement.id)
+    if duplicates:
+        raise OscalMappingError(
+            f"duplicate requirement ids: {sorted(duplicates)[:5]}", path="catalog"
         )
     metadata = map_metadata(catalog, commit=commit, repo=repo, count=len(requirements))
     return Catalog(requirements, metadata)

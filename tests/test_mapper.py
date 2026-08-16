@@ -159,9 +159,32 @@ def test_missing_statement_fails_loudly() -> None:
     assert "statement" in str(exc.value)
 
 
-def test_missing_guidance_fails_loudly() -> None:
+# NOTE: `test_missing_guidance_fails_loudly` used to live here and asserted that
+# a control without a 'guidance' part always raises. That encoded a universal
+# assumption that the pinned data falsifies: REA.2.6.1 and REA.2.6.2.1 carry a
+# statement and no guidance part at all (2 of ~1000, verified against the whole
+# catalog). `guidance` is the one optional part (see `_extract_part_prose`'s
+# `required` flag); a part *absent from `parts` entirely* now yields "" instead
+# of raising. The two tests below replace it and keep both shapes covered: the
+# now-legal absence, and the still-illegal "present but blank" drift signal.
+
+
+def test_guidance_part_absent_from_parts_yields_empty_string() -> None:
     control = _valid_control()
     control["parts"] = [{"name": "statement", "prose": "Nur Statement."}]
+    req = map_requirement(control, module="APP.1.1", module_title="t", path="root")
+    assert req.guidance == ""
+
+
+def test_guidance_part_present_but_blank_still_fails_loudly() -> None:
+    # Present-but-blank is malformed data, not the documented absence carve-out,
+    # and must still raise -- this is the drift signal that must not be
+    # swallowed by making 'guidance' optional.
+    control = _valid_control()
+    control["parts"] = [
+        {"name": "statement", "prose": "Nur Statement."},
+        {"name": "guidance", "prose": "   "},
+    ]
     with pytest.raises(OscalMappingError) as exc:
         map_requirement(control, module="APP.1.1", module_title="t", path="root")
     assert "guidance" in str(exc.value)
@@ -556,6 +579,162 @@ def test_map_catalog_by_module_empty_for_unknown_module() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Control nesting (bug fix regression) — requirements nested under requirements
+#
+# OSCAL lets a control carry its own "controls" list, and the BSI catalog uses
+# that heavily: at the pinned commit, 348 of ~1000 requirements sit under
+# another control (19 at depth 2, 2 at depth 3). `_walk_controls` used to
+# recurse into `group["groups"]` but never into `control["controls"]`, so the
+# model silently held only 652 of ~1000 requirements and every dangling
+# cross-reference pointed at one of the unread third. `module`/`module_title`
+# are inherited from the enclosing GROUP unchanged, at any nesting depth --
+# nesting inside a control does not create a new Baustein.
+# ---------------------------------------------------------------------------
+
+
+def _nested(control: dict[str, object], children: list[dict[str, object]]) -> dict[str, object]:
+    """Attach `children` as `control["controls"]`, returning the same control."""
+    control["controls"] = children
+    return control
+
+
+def test_control_with_no_nested_controls_is_unaffected() -> None:
+    # Regression net for the 652 that already worked: a control with an
+    # explicit empty "controls" list behaves exactly like one with none.
+    control = _nested(_control("G.A1", "Titel", "Text."), [])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [control]}]}
+    cat = map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert [r.id for r in cat.all()] == ["G.A1"]
+
+
+def test_one_level_of_control_nesting_is_walked() -> None:
+    child = _control("G.A1.1", "Kind", "Kindtext.")
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [child])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    cat = map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert {r.id for r in cat.all()} == {"G.A1", "G.A1.1"}
+    nested = cat.get("G.A1.1")
+    assert nested is not None
+    # module/module_title come from the enclosing GROUP, not the parent control.
+    assert nested.module == "G"
+    assert nested.module_title == "Gruppe"
+
+
+def test_two_levels_of_control_nesting_are_walked() -> None:
+    # Mirrors the real depth-2 shape (19 cases at the pinned commit).
+    grandchild = _control("G.A1.1.1", "Enkel", "Enkeltext.")
+    child = _nested(_control("G.A1.1", "Kind", "Kindtext."), [grandchild])
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [child])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    cat = map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert {r.id for r in cat.all()} == {"G.A1", "G.A1.1", "G.A1.1.1"}
+    for rid in ("G.A1", "G.A1.1", "G.A1.1.1"):
+        req = cat.get(rid)
+        assert req is not None and req.module == "G" and req.module_title == "Gruppe"
+
+
+def test_three_levels_of_control_nesting_are_walked() -> None:
+    # Mirrors the real depth-3 shape (2 cases at the pinned commit). Recursion
+    # must not stop after one level.
+    great_grandchild = _control("G.A1.1.1.1", "Urenkel", "Urenkeltext.")
+    grandchild = _nested(_control("G.A1.1.1", "Enkel", "Enkeltext."), [great_grandchild])
+    child = _nested(_control("G.A1.1", "Kind", "Kindtext."), [grandchild])
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [child])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    cat = map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert {r.id for r in cat.all()} == {
+        "G.A1",
+        "G.A1.1",
+        "G.A1.1.1",
+        "G.A1.1.1.1",
+    }
+    deepest = cat.get("G.A1.1.1.1")
+    assert deepest is not None
+    assert deepest.module == "G"
+    assert deepest.module_title == "Gruppe"
+
+
+def test_nested_control_without_id_propagates_full_tree_path() -> None:
+    # Mirrors test_map_catalog_control_without_id_propagates_tree_path, but the
+    # offending control is nested under another control, not a sub-group.
+    bad = _control("X.A1", "Ohne ID", "Text.")
+    del bad["id"]
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [bad])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert exc.value.path == "catalog.groups[0].controls[0].controls[0]"
+    assert "id" in str(exc.value)
+
+
+def test_nested_control_with_bad_sec_level_propagates_full_tree_path() -> None:
+    bad = _control("X.A1", "Falsches Level", "Text.", sec_level="sehr hoch")
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [bad])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert exc.value.path == "catalog.groups[0].controls[0].controls[0].props"
+    assert "sec_level" in str(exc.value)
+
+
+def test_nested_missing_statement_fails_loudly_at_any_depth() -> None:
+    # statement stays required regardless of nesting depth.
+    bad = _control("X.A1", "Ohne Statement", "Text.")
+    bad["parts"] = [{"name": "guidance", "prose": "Nur Guidance."}]
+    grandchild = bad
+    child = _nested(_control("G.A1.1", "Kind", "Kindtext."), [grandchild])
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [child])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert "statement" in str(exc.value)
+    assert exc.value.path == "catalog.groups[0].controls[0].controls[0].controls[0].parts"
+
+
+def test_nested_control_controls_not_a_list_fails_with_path() -> None:
+    # Symmetric with test_non_list_controls_fails_with_path (a group's controls)
+    # and test_non_list_subgroups_fails_with_path (a group's groups): here it is
+    # a nested CONTROL's own "controls" key that is malformed.
+    parent = _control("G.A1", "Eltern", "Elterntext.")
+    parent["controls"] = "nope"
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [parent]}]}
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert exc.value.path == "catalog.groups[0].controls[0].controls"
+
+
+def test_deep_control_nesting_fails_loudly_not_recursion_error() -> None:
+    # Parallels test_deep_group_nesting_fails_loudly, but the chain is built from
+    # controls nested under controls rather than groups nested under groups.
+    innermost = _control("X.C40", "T", "Text.")
+    node = innermost
+    for i in range(39, 0, -1):
+        node = _nested(_control(f"X.C{i}", "T", "Text."), [node])
+    body: dict[str, object] = {"groups": [{"id": "G", "title": "Gruppe", "controls": [node]}]}
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert "nesting" in str(exc.value).lower() or "depth" in str(exc.value).lower()
+
+
+def test_by_module_and_modules_count_nested_controls_under_enclosing_group() -> None:
+    # Nesting inside a control must not create a new module: the nested
+    # requirement is counted under the enclosing GROUP's module, not its own.
+    child = _control("G.A1.1", "Kind", "Kindtext.")
+    parent = _nested(_control("G.A1", "Eltern", "Elterntext."), [child])
+    other = _control("H.B1", "Andere Gruppe", "Text.")
+    body: dict[str, object] = {
+        "groups": [
+            {"id": "G", "title": "Gruppe", "controls": [parent]},
+            {"id": "H", "title": "Andere", "controls": [other]},
+        ]
+    }
+    cat = map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert {r.id for r in cat.by_module("G")} == {"G.A1", "G.A1.1"}
+    summaries = {s.module: s.requirement_count for s in cat.modules()}
+    assert summaries == {"G": 2, "H": 1}
+
+
+# ---------------------------------------------------------------------------
 # Metadata
 # ---------------------------------------------------------------------------
 
@@ -663,7 +842,13 @@ def test_map_catalog_missing_groups_yields_empty_catalog() -> None:
     assert cat.metadata.requirement_count == 0
 
 
-def test_map_catalog_duplicate_ids_last_wins_but_count_keeps_both() -> None:
+# Replaces test_map_catalog_duplicate_ids_last_wins_but_count_keeps_both, which
+# characterised the old behaviour: all()/requirement_count kept both entries
+# while get() returned whichever came last. That is two different requirements
+# answering to one id, with the counts disagreeing with the index -- silently
+# wrong data, which invariant 6 forbids and ADR-0012 makes explicit. The
+# duplicate now fails loudly instead, so the disagreement cannot ship.
+def test_map_catalog_duplicate_ids_fail_loudly() -> None:
     body: dict[str, object] = {
         "groups": [
             {
@@ -676,13 +861,24 @@ def test_map_catalog_duplicate_ids_last_wins_but_count_keeps_both() -> None:
             }
         ]
     }
-    cat = map_catalog(body, commit=_COMMIT, repo=_REPO)
-    # all()/count keep both entries...
-    assert len(cat.all()) == 2
-    assert cat.metadata.requirement_count == 2
-    # ...but get() (backed by _by_id) returns the last one seen.
-    won = cat.get("DUP.A1")
-    assert won is not None and won.title == "Zweiter"
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert "duplicate requirement ids" in str(exc.value)
+    assert "DUP.A1" in str(exc.value)
+
+
+def test_map_catalog_duplicate_id_across_nesting_levels_fails_loudly() -> None:
+    """A nested control reusing its parent's id is still a duplicate.
+
+    The nesting fix quadrupled the number of places an id can come from, so the
+    check has to see across levels, not just within one group's control list.
+    """
+    parent = _control("DUP.B1", "Eltern", "Eltern-Text.")
+    parent["controls"] = [_control("DUP.B1", "Kind", "Kind-Text.")]
+    body: dict[str, object] = {"groups": [{"id": "DUP", "title": "DUP", "controls": [parent]}]}
+    with pytest.raises(OscalMappingError) as exc:
+        map_catalog(body, commit=_COMMIT, repo=_REPO)
+    assert "duplicate requirement ids" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

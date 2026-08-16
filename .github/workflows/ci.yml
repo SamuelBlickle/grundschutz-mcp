@@ -50,9 +50,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   drift-monitor:
-    # Runs on schedule and main. Hits the pinned BSI source and fails loudly if
-    # the OSCAL shape no longer maps. Surfaces upstream drift before users do.
-    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    # Hits the pinned BSI source and fails loudly if the OSCAL shape no longer
+    # maps. Runs on pull requests too, not only on schedule and main: ADR-0012
+    # rests the guidance carve-out and the bidirectional completeness assertion
+    # on tests in this suite, and a guarantee that cannot block the pull request
+    # changing BSI_PINNED_COMMIT is documentation, not enforcement. The upstream
+    # fetch is no new coupling -- the artifacts job already makes one per PR.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

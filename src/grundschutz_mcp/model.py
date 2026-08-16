@@ -20,10 +20,22 @@ class Requirement(BaseModel):
     BSI source and are never translated.
     """
 
-    id: str = Field(..., description="Stable BSI requirement/practice ID.")
+    id: str = Field(
+        ...,
+        description=(
+            "BSI requirement/practice ID at the pinned data commit. Ids can be "
+            "withdrawn or renumbered upstream between data updates."
+        ),
+    )
     title: str
     text: str = Field(..., description="Original German requirement text.")
-    guidance: str = Field(..., description="Original German implementation guidance.")
+    guidance: str = Field(
+        ...,
+        description=(
+            "Original German implementation guidance. Empty when the BSI defines "
+            "no guidance for this requirement, which is rare but legitimate."
+        ),
+    )
     module: str = Field(..., description="Module (group) ID this belongs to.")
     module_title: str = Field(..., description="Module (group) title this belongs to.")
     security_level: Literal["normal-SdT", "erhöht"] = Field(
