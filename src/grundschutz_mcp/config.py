@@ -8,12 +8,12 @@ strategy in the project briefing), never an implicit moving target.
 from __future__ import annotations
 
 # Pinned commit of BSI-Bund/Stand-der-Technik-Bibliothek.
-# HEAD of `main` as of 2026-07-30, verified via /verify-oscal on 2026-08-02.
+# HEAD of `main` as of 2026-08-13, verified via /verify-oscal on 2026-08-16.
 BSI_REPO = "BSI-Bund/Stand-der-Technik-Bibliothek"
-BSI_PINNED_COMMIT = "47de2824a341812438ef3f044b3f65ce2cad6e32"
+BSI_PINNED_COMMIT = "80694713a7a430d12eb2099893de23ad8bb6f780"
 
 # Path to the Grundschutz++ compendium (OSCAL/JSON) inside the repo.
-# Verified against the real repo tree on 2026-08-02 (note the literal "++").
+# Verified against the real repo tree on 2026-08-16 (note the literal "++").
 #
 # Upstream moved this in 7ea20849 ("Migrate public library to layer-based
 # structure", 2026-07-27): Anwenderkataloge/ became control_layer/ and the
