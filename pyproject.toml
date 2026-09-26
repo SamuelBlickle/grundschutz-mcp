@@ -1,6 +1,6 @@
 [project]
 name = "grundschutz-mcp"
-version = "1.2.0"
+version = "1.2.1"
 description = "MCP server that makes the BSI IT-Grundschutz++ compendium queryable for AI agents and ISMS tooling."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,14 @@ dependencies = [
     "mcp>=2.0.0,<3",
     "pydantic>=2.6",     # internal model + validation
     "httpx>=0.27",       # runtime loading of the pinned BSI data
+    # Security floors for transitive deps (not imported directly). They keep
+    # installs off versions with known advisories; drop once mcp requires them.
+    # anyio: GHSA-82r6-8w77-94w6, GHSA-5p39-cfhj-2xmp, GHSA-3w57-8xmc-8v26
+    "anyio>=4.14.2",
+    # httpx2 (via mcp): GHSA-8xx6-hgc6-gc2m, GHSA-7mj9-2mp8-4m2p,
+    # GHSA-pf96-p4fj-6566, GHSA-h4x7-gw46-3wm6, GHSA-f2fp-rgf2-35cp.
+    # httpx2 pins httpcore2 to its own version, which covers httpcore2 too.
+    "httpx2>=2.12.0",
 ]
 
 [project.urls]
