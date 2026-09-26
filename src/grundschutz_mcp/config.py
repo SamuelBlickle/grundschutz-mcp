@@ -8,9 +8,9 @@ strategy in the project briefing), never an implicit moving target.
 from __future__ import annotations
 
 # Pinned commit of BSI-Bund/Stand-der-Technik-Bibliothek.
-# HEAD of `main` as of 2026-08-13, verified via /verify-oscal on 2026-08-16.
+# HEAD of `main` as of 2026-09-10, verified via /verify-oscal on 2026-09-26.
 BSI_REPO = "BSI-Bund/Stand-der-Technik-Bibliothek"
-BSI_PINNED_COMMIT = "80694713a7a430d12eb2099893de23ad8bb6f780"
+BSI_PINNED_COMMIT = "367d775010abee641b258926bb482fcd05270059"
 
 # Path to the Grundschutz++ compendium (OSCAL/JSON) inside the repo.
 # Verified against the real repo tree on 2026-08-16 (note the literal "++").
