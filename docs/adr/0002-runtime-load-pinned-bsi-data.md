@@ -12,6 +12,25 @@
 > derived is packaged. Read the rationale below with that substitution excepted;
 > NOTICE states it for redistributors, and ADR-0011 records the corrected scope.
 
+> **Amendment (2026-09-27):** "pinning to a commit keeps loads reproducible"
+> holds only while the pin stays part of upstream history. The BSI force-pushed
+> `main` on 2026-08-19 and re-hashed every commit. The 1.2.x pin `80694713` has
+> not been an ancestor of `main` since then. GitHub still serves it, but an
+> orphaned commit can be garbage-collected, and every release pinned to it would
+> then stop loading data. The file content was unaffected, so every check stayed
+> green; 1.3.0 re-pinned onto current history. The "drift monitor" named under
+> Consequences is in fact three instruments:
+> - the `drift-monitor` job in `ci.yml`: does the data at the pin still map?
+> - `upstream-watch.yml`, content and path drift: has the pinned file changed or
+>   moved upstream?
+> - `upstream-watch.yml`, pin reachability (added with this amendment): is the
+>   pin still an ancestor of the upstream default branch?
+>
+> Reachability monitoring is **detection, not prevention**. Releases already on
+> PyPI keep their pin, so the only remedy is to re-pin and ship promptly. Checking
+> a *candidate* pin before adopting it is a step in `/verify-oscal`, so it is
+> procedure, not enforcement.
+
 ## Context and problem statement
 The server needs the BSI Grundschutz++ compendium. The BSI publishes it as
 machine-readable OSCAL under CC BY-SA 4.0 in a repository that is an explicit
