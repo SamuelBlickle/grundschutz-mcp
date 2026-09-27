@@ -1,6 +1,6 @@
 # 0010. Version the software with SemVer, decoupled from the BSI data version
 
-- Status: accepted
+- Status: accepted (refined by ADR-0013: data bumps that remove or replace content are MINOR too)
 - Date: 2026-06-07
 
 > **Erratum (2026-06-20):** the tool referred to as `get_mapping` below was later
