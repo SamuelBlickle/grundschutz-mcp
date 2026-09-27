@@ -1,3 +1,3 @@
 """grundschutz-mcp: an MCP server for the BSI IT-Grundschutz++ compendium."""
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
