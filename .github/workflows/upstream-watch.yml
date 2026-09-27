@@ -5,6 +5,8 @@ name: Upstream watch
 # whether the data at our PINNED commit still maps (the pin is immutable, so it
 # can never see upstream updates). This watcher compares the pinned blob against
 # the upstream default-branch HEAD and opens a tracking issue when they diverge.
+# It also checks that the pin is still an ancestor of that branch: a force-push
+# upstream can orphan the pin while every content comparison stays green.
 
 on:
   schedule:
@@ -71,6 +73,56 @@ jobs:
             ""|*[!A-Za-z0-9._/-]*)
               echo "::error::implausible upstream default branch: '$default_branch'" >&2
               exit 5 ;;
+          esac
+
+          # Reachability before content. The blob comparison below answers
+          # "has the file changed since our pin?", which silently assumes the pin
+          # is still part of upstream history. The BSI force-pushed main on
+          # 2026-08-19 and re-hashed every commit, which orphaned the 1.2.x pin:
+          # GitHub still served it, so every check here stayed green, but a pin
+          # that is not an ancestor of the default branch can be garbage-collected
+          # at any time, and every release pinned to it then stops loading data.
+          #
+          # compare PIN...BRANCH reports how BRANCH relates to PIN: "identical"
+          # or "ahead" means PIN is an ancestor, so reachable. "behind" and
+          # "diverged" mean it is not. A 404 means the pin shares no history
+          # with the branch (a rewrite down to the root commit) or is already
+          # gone; either way it is not reachable. Anything else is not an
+          # answer, so fail rather than guess.
+          # The 404 is told apart from other errors by the API's own message,
+          # not by treating every failed call as "gone": a rate limit or outage
+          # must fail the run, not open an alarming issue.
+          # Only a full commit SHA is a pin. A branch or tag name would compare
+          # "identical" with the branch forever and make both checks green while
+          # the data silently tracks a moving ref.
+          if ! printf '%s' "$PIN" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::BSI_PINNED_COMMIT is not a full 40-hex commit SHA: '$PIN'" >&2
+            exit 8
+          fi
+
+          if cmp_out="$(gh api "repos/$BSI_REPO/compare/$PIN...$default_branch" --jq .status 2>&1)"; then
+            reach_status="$cmp_out"
+          elif grep -q 'HTTP 404' <<<"$cmp_out"; then
+            reach_status="unrelated-or-missing"
+          else
+            echo "::error::could not compare the pin against $default_branch: $cmp_out" >&2
+            exit 7
+          fi
+          echo "pin vs $default_branch: $reach_status"
+          case "$reach_status" in
+            identical|ahead) ;;
+            behind|diverged|unrelated-or-missing)
+              # Reported as its own drift kind and before any content check: the
+              # remediation (re-pin onto current history, release promptly) is
+              # the same whatever the content did, and it is the more urgent one.
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "drift=unreachable" >> "$GITHUB_OUTPUT"
+              echo "reach_status=$reach_status" >> "$GITHUB_OUTPUT"
+              echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+            *)
+              echo "::error::unexpected compare status: '$reach_status'" >&2
+              exit 7 ;;
           esac
 
           blob_at() {
@@ -171,6 +223,7 @@ jobs:
           CPATH: ${{ steps.cfg.outputs.path }}
           DEFAULT_BRANCH: ${{ steps.diff.outputs.default_branch }}
           DRIFT: ${{ steps.diff.outputs.drift }}
+          REACH_STATUS: ${{ steps.diff.outputs.reach_status }}
         run: |
           set -euo pipefail
           # Dedupe per drift kind, not per label. The two kinds have different
@@ -194,7 +247,24 @@ jobs:
             exit 0
           fi
 
-          if [ "$DRIFT" = "path" ]; then
+          if [ "$DRIFT" = "unreachable" ]; then
+            title="Gepinnter BSI-Commit ist nicht mehr Teil der Upstream-Historie"
+            lead="$(printf '%s\n' \
+              "Der gepinnte Commit ist **kein Vorfahre von \`$DEFAULT_BRANCH\`** mehr" \
+              "(Vergleich: \`$REACH_STATUS\`). Das passiert, wenn das BSI die Historie" \
+              "umschreibt (Force-Push), wie am 2026-08-19 geschehen." \
+              "" \
+              "Solange GitHub den Commit noch ausliefert, läuft der Server weiter. Ein" \
+              "verwaister Commit kann aber jederzeit per Garbage Collection verschwinden;" \
+              "danach lädt **jedes Release mit diesem Pin keine Daten mehr**." \
+              "" \
+              "> Zeitkritisch: auf einen Commit der aktuellen Historie umpinnen und zügig" \
+              "> releasen, damit Nutzer upgraden können, bevor der alte Pin wegfällt.")"
+            link="- **Vergleich:** https://github.com/$BSI_REPO/compare/$PIN...$DEFAULT_BRANCH"
+            steps=("- [ ] Neuen Pin auf \`$DEFAULT_BRANCH\` wählen und \`/verify-oscal\` dagegen laufen lassen"
+                   "- [ ] \`BSI_PINNED_COMMIT\` in \`src/grundschutz_mcp/config.py\` bumpen"
+                   "- [ ] In den Release-Notes zum Upgrade auffordern (ältere Releases hängen am verwaisten Pin)")
+          elif [ "$DRIFT" = "path" ]; then
             title="BSI hat den Pfad des Grundschutz++-Compendiums geändert"
             lead="$(printf '%s\n' \
               "Die ausgelieferte Compendium-Datei existiert unter dem gepinnten Pfad" \

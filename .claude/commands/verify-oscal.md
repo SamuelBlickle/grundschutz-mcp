@@ -12,6 +12,13 @@ Drive the resolution of the TODO verification points. Do not invent field paths.
      BSI_COMPENDIUM_PATH (the actual file path in the repo).
    - mapper.py: the true OSCAL field paths for id, title, statement prose,
      protection-goal props, and ISO 27001 links.
+   Confirm the candidate pin is part of upstream history before adopting it,
+   against the upstream default branch (currently `main`):
+   `gh api repos/BSI-Bund/Stand-der-Technik-Bibliothek/compare/<pin>...main --jq .status`
+   must print `identical` or `ahead`. `behind`, `diverged` or a 404 means the
+   commit is not an ancestor of that branch (a PR ref, a fork, or history
+   rewritten by a force-push, as on 2026-08-19) and can be garbage-collected.
+   Do not pin it.
 3. Update config.py and mapper.py accordingly. Only mapper.py changes for field
    paths; tools and model stay untouched unless a genuinely new field is needed.
 4. Run `uv run pytest -m network` to confirm the pinned data maps cleanly.
